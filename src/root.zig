@@ -1,20 +1,21 @@
 const std = @import("std");
-const testing = std.testing;
+const print = std.debug.print;
 
 const Sample = packed struct {
     id: u64 = 1,
     pos: i64 = -1,
+    main: bool = false,
 };
 
 test "gen" {
     const n = @sizeOf(Sample);
-    std.debug.print("size={d}\n", .{n});
-    const tmp = Sample{};
+    print("size={any}\n", .{n});
+    const tmp = Sample{
+        .main = true,
+    };
     const b = std.mem.asBytes(&tmp);
-    std.debug.print("bytes={any}, ptr={any}, len={any}\n", .{ b, b.ptr, b.len });
+    print("bytes={any}, ptr={any}, len={any}\n", .{ b, b.ptr, b.len });
 
-    const ptr = @intFromPtr(b);
-    std.debug.print("back={any}\n", .{ptr});
-    const back: *Sample = @ptrFromInt(ptr);
-    std.debug.print("id={any}, pos={any}\n", .{ back.id, back.pos });
+    const ptr: *Sample = @ptrFromInt(@intFromPtr(b));
+    print("id={any}, pos={any}, main={any}\n", .{ ptr.id, ptr.pos, ptr.main });
 }
