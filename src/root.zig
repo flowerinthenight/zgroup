@@ -27,3 +27,18 @@ test "gen" {
 
     print("name=0x{x}\n", .{ptr.name});
 }
+
+test "timer" {
+    var tm = std.time.Timer.start() catch |err| {
+        print("err={any}\n", .{err});
+        return;
+    };
+
+    print("v={any}\n", .{tm.read()});
+    std.time.sleep(std.time.ns_per_ms * 1000);
+    print("v={any}\n", .{tm.read()});
+    std.time.sleep(1e9);
+    print("v={any}\n", .{tm.lap()});
+    std.time.sleep(1e9);
+    print("v={any}\n", .{tm.lap()});
+}
