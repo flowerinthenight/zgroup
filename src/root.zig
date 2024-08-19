@@ -12,7 +12,8 @@ test "gen" {
     const n = @sizeOf(Sample);
     print("size={any}\n", .{n});
 
-    const name = std.fmt.parseUnsigned(u128, "0xf47ac10b58cc4372a5670e02b2c3d479", 0) catch 0;
+    const hex = "0xf47ac10b58cc4372a5670e02b2c3d479";
+    const name = std.fmt.parseUnsigned(u128, hex, 0) catch return;
     const tmp = Sample{
         .main = true,
         .name = name,
