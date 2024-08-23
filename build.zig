@@ -15,12 +15,12 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    const pkg_zbackoff = b.dependency("zbackoff", .{
+    const zbackoff = b.dependency("zbackoff", .{
         .target = target,
         .optimize = optimize,
     });
 
-    const mod_zbackoff = pkg_zbackoff.module("zbackoff");
+    const mod_zbackoff = zbackoff.module("zbackoff");
 
     const lib = b.addStaticLibrary(.{
         .name = "zgroup",
