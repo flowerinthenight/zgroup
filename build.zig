@@ -36,10 +36,26 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const s = b.addExecutable(.{
+        .name = "server",
+        .root_source_file = b.path("src/server.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const c = b.addExecutable(.{
+        .name = "client",
+        .root_source_file = b.path("src/client.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
     b.installArtifact(exe);
+    b.installArtifact(s);
+    b.installArtifact(c);
 
     // This *creates* a Run step in the build graph, to be executed when another
     // step is evaluated that depends on it. The next line below will establish
