@@ -15,6 +15,13 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    const pkg_zbackoff = b.dependency("zbackoff", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const mod_zbackoff = pkg_zbackoff.module("zbackoff");
+
     const lib = b.addStaticLibrary(.{
         .name = "zgroup",
         // In this case the main source file is merely a path, however, in more
@@ -35,6 +42,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+
+    exe.root_module.addImport("zbackoff", mod_zbackoff);
 
     const s = b.addExecutable(.{
         .name = "server",
@@ -95,6 +104,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+
+    exe_unit_tests.root_module.addImport("zbackoff", mod_zbackoff);
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 

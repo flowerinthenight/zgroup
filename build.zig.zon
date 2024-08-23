@@ -51,6 +51,11 @@
         //    // actually used.
         //    .lazy = false,
         //},
+
+        .zbackoff = .{
+            .url = "https://github.com/flowerinthenight/zbackoff/archive/v0.1.0.tar.gz",
+            .hash = "1220d916c94ec121cbad861f1fcab113a25c4590466d29319996cfba2a663008c5fd",
+        },
     },
 
     // Specifies the set of files and directories that are included in this package.
