@@ -103,6 +103,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .filter = b.option([]const u8, "test-filter", "Filter strings for test"),
     });
 
     exe_unit_tests.root_module.addImport("zbackoff", mod_zbackoff);

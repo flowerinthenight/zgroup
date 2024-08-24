@@ -8,5 +8,5 @@ pub fn main() !void {
 
 test "backoff" {
     const bo = backoff.Backoff{};
-    std.debug.print("val={any}.\n", .{bo.initial});
+    std.debug.print("val={any}\n", .{bo.initial});
 }
