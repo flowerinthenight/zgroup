@@ -40,9 +40,14 @@ test "backoff" {
     try alist.append(.{ .val = "three" });
     try alist.append(.{ .val = "four" });
 
-    for (alist.items) |v| {
-        std.debug.print("val={s}\n", .{v.val});
+    for (alist.items, 0..) |v, i| {
+        std.debug.print("[{d}]val={s}\n", .{ i, v.val });
+    } else {
+        std.debug.print("else items\n", .{});
     }
 
     std.debug.print("val[2]={s}\n", .{alist.items[2].val});
+
+    const ms = std.time.milliTimestamp();
+    std.debug.print("time={any}\n", .{ms});
 }
