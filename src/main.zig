@@ -21,11 +21,7 @@ pub fn main() !void {
     defer arena.deinit(); // destroy arena one time
     const arena_alloc = arena.allocator();
     var args = try std.process.argsWithAllocator(arena_alloc);
-    // defer args.deinit();
-
     var alist = std.ArrayList(Args).init(arena_alloc);
-    // defer alist.deinit();
-
     while (args.next()) |v| {
         try alist.append(.{ .val = v });
     }
