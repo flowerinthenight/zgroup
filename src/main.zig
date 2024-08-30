@@ -1,6 +1,13 @@
 const std = @import("std");
 const backoff = @import("zbackoff");
 
+pub const Payload = packed struct {
+    id: u64 = 2,
+    name: u128 = 0,
+    pos: i64 = -1,
+    primary: bool = false,
+};
+
 const Args = struct {
     val: []const u8 = undefined,
 };
