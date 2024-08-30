@@ -20,10 +20,10 @@ pub fn main() !void {
     const sock = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM | std.posix.SOCK.CLOEXEC, 0);
     defer std.posix.close(sock);
 
-    // var buf: [1024]u8 = undefined;
+    var len: usize = undefined;
     try std.posix.connect(sock, &addr.any, addr.getOsSockLen());
     _ = try std.posix.write(sock, std.mem.asBytes(ptr));
-    var len = try std.posix.recv(sock, buf, 0);
+    len = try std.posix.recv(sock, buf, 0);
     std.debug.print("{d}: reply: id={d}, name=0x{x}\n", .{ len, ptr.id, ptr.name });
 
     ptr.id = 0; // this will cause server to quit
