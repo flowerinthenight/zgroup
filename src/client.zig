@@ -1,4 +1,5 @@
 const std = @import("std");
+const print = std.debug.print;
 const Payload = @import("main.zig").Payload;
 
 pub fn main() !void {
@@ -15,7 +16,7 @@ pub fn main() !void {
     ptr.primary = true;
 
     const port = 8080;
-    std.debug.print("Connecting to :{any}...\n", .{port});
+    print("Connecting to :{any}...\n", .{port});
     const addr = try std.net.Address.resolveIp("127.0.0.1", port);
     const sock = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM | std.posix.SOCK.CLOEXEC, 0);
     defer std.posix.close(sock);
@@ -24,10 +25,10 @@ pub fn main() !void {
     try std.posix.connect(sock, &addr.any, addr.getOsSockLen());
     _ = try std.posix.write(sock, std.mem.asBytes(ptr));
     len = try std.posix.recv(sock, buf, 0);
-    std.debug.print("{d}: reply: id={d}, name=0x{x}\n", .{ len, ptr.id, ptr.name });
+    print("{d}: reply: id={d}, name=0x{x}\n", .{ len, ptr.id, ptr.name });
 
     ptr.id = 0; // this will cause server to quit
     _ = try std.posix.write(sock, std.mem.asBytes(ptr));
     len = try std.posix.recv(sock, buf, 0);
-    std.debug.print("{d}: reply: id={d}, name=0x{x}\n", .{ len, ptr.id, ptr.name });
+    print("{d}: reply: id={d}, name=0x{x}\n", .{ len, ptr.id, ptr.name });
 }
