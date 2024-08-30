@@ -9,12 +9,18 @@ pub fn main() !void {
 
     try std.posix.bind(sock, &addr.any, addr.getOsSockLen());
     var buf: [1024]u8 = undefined;
+    var src_addr: std.os.linux.sockaddr = undefined;
+    var src_addrlen: std.posix.socklen_t = @sizeOf(std.os.linux.sockaddr);
 
     while (true) {
-        const len = try std.posix.recv(sock, &buf, 0);
+        const len = try std.posix.recvfrom(sock, &buf, 0, &src_addr, &src_addrlen);
         std.debug.print("{d}: {s}", .{ len, buf[0..len] });
         if (std.mem.eql(u8, buf[0 .. len - 1], "quit")) {
             break;
         }
+
+        _ = std.posix.sendto(sock, "ack", 0, &src_addr, src_addrlen) catch |err| {
+            std.debug.print("ack failed: {any}", .{err});
+        };
     }
 }
