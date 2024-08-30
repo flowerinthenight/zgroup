@@ -2,6 +2,8 @@ const std = @import("std");
 const Payload = @import("main.zig").Payload;
 
 pub fn main() !void {
+    std.debug.print("size={any}, align={any}\n", .{ @sizeOf(Payload), @alignOf(Payload) });
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
@@ -22,12 +24,14 @@ pub fn main() !void {
         const len = try std.posix.recvfrom(sock, buf, 0, &src_addr, &src_addrlen);
         const ptr: *Payload = @ptrCast(@alignCast(buf));
         std.debug.print("{d}: id={d}, name=0x{x}\n", .{ len, ptr.id, ptr.name });
+        const id = ptr.id;
 
-        _ = std.posix.sendto(sock, "ack", 0, &src_addr, src_addrlen) catch |err| {
+        ptr.id = 10; // reply
+        _ = std.posix.sendto(sock, std.mem.asBytes(ptr), 0, &src_addr, src_addrlen) catch |err| {
             std.debug.print("ack failed: {any}", .{err});
         };
 
-        if (ptr.id == 0) {
+        if (id == 0) {
             break;
         }
     }
