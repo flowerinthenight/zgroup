@@ -18,10 +18,10 @@ pub fn main() !void {
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var arena = std.heap.ArenaAllocator.init(gpa.allocator());
-    defer arena.deinit(); // destroy arena one time
-    const arena_alloc = arena.allocator();
-    var args = try std.process.argsWithAllocator(arena_alloc);
-    var alist = std.ArrayList(Args).init(arena_alloc);
+    defer arena.deinit(); // destroy arena in one go
+    const allocator = arena.allocator();
+    var args = try std.process.argsWithAllocator(allocator);
+    var alist = std.ArrayList(Args).init(allocator);
     while (args.next()) |v| {
         try alist.append(.{ .val = v });
     }
