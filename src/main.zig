@@ -1,5 +1,9 @@
 const std = @import("std");
 const backoff = @import("zbackoff");
+const builtin = std.builtin;
+const AtomicOrder = std.builtin.AtomicOrder;
+const AtomicRmwOp = std.builtin.AtomicRmwOp;
+const print = std.debug.print;
 
 pub const Payload = packed struct {
     id: u64 = 2,
@@ -14,7 +18,7 @@ const Args = struct {
 
 pub fn main() !void {
     const bo = backoff.Backoff{};
-    std.debug.print("val={any}\n", .{bo.initial});
+    print("val={any}\n", .{bo.initial});
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var arena = std.heap.ArenaAllocator.init(gpa.allocator());
@@ -27,13 +31,13 @@ pub fn main() !void {
     }
 
     for (alist.items) |v| {
-        std.debug.print("val={s}\n", .{v.val});
+        print("val={s}\n", .{v.val});
     }
 }
 
 test "backoff" {
     const bo = backoff.Backoff{};
-    std.debug.print("val={any}\n", .{bo.initial});
+    print("val={any}\n", .{bo.initial});
 
     var alist = std.ArrayList(Args).init(std.testing.allocator);
     defer alist.deinit();
@@ -44,13 +48,25 @@ test "backoff" {
     try alist.append(.{ .val = "four" });
 
     for (alist.items, 0..) |v, i| {
-        std.debug.print("[{d}]val={s}\n", .{ i, v.val });
+        print("[{d}]val={s}\n", .{ i, v.val });
     } else {
-        std.debug.print("else items\n", .{});
+        print("else items\n", .{});
     }
 
-    std.debug.print("val[2]={s}\n", .{alist.items[2].val});
+    print("val[2]={s}\n", .{alist.items[2].val});
 
     const ms = std.time.milliTimestamp();
-    std.debug.print("time={any}\n", .{ms});
+    print("time={any}\n", .{ms});
+}
+
+test "atomic" {
+    var tm = try std.time.Timer.start();
+    var v: u64 = 0;
+    @atomicStore(u64, &v, 1, AtomicOrder.seq_cst);
+    _ = @atomicLoad(u64, &v, AtomicOrder.seq_cst);
+    // print("load={d}\n", .{a});
+    _ = @atomicRmw(u64, &v, AtomicRmwOp.Add, 1e9, AtomicOrder.seq_cst);
+    _ = @atomicLoad(u64, &v, AtomicOrder.seq_cst);
+    // print("add={d}\n", .{b});
+    print("took {d}\n", .{tm.read()});
 }
