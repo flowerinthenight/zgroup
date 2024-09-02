@@ -70,3 +70,8 @@ test "atomic" {
     // print("add={d}\n", .{b});
     print("took {d}\n", .{tm.read()});
 }
+
+test "ip" {
+    const addr = try std.net.Address.resolveIp("127.0.0.1", 8080);
+    print("0x{X}, {d}\n", .{ addr.in.sa.addr, addr.in.sa.addr });
+}
