@@ -1,11 +1,11 @@
 const std = @import("std");
-const backoff = @import("zbackoff");
 const builtin = std.builtin;
 const AtomicOrder = std.builtin.AtomicOrder;
 const AtomicRmwOp = std.builtin.AtomicRmwOp;
+const backoff = @import("zbackoff");
+const root = @import("root.zig");
 const dbg = std.debug.print;
 
-const root = @import("root.zig");
 const log = std.log;
 
 pub const std_options = .{
