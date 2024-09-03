@@ -3,7 +3,17 @@ const backoff = @import("zbackoff");
 const builtin = std.builtin;
 const AtomicOrder = std.builtin.AtomicOrder;
 const AtomicRmwOp = std.builtin.AtomicRmwOp;
-const print = std.debug.print;
+const dbg = std.debug.print;
+
+const root = @import("root.zig");
+const log = std.log;
+
+pub const std_options = .{
+    .log_level = .info,
+    .log_scope_levels = &[_]std.log.ScopeLevel{
+        .{ .scope = .zgroup, .level = .info },
+    },
+};
 
 pub const Payload = packed struct {
     id: u64 = 2,
@@ -18,7 +28,7 @@ const Args = struct {
 
 pub fn main() !void {
     const bo = backoff.Backoff{};
-    print("val={any}\n", .{bo.initial});
+    log.info("val={any}", .{bo.initial});
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var arena = std.heap.ArenaAllocator.init(gpa.allocator());
@@ -31,13 +41,15 @@ pub fn main() !void {
     }
 
     for (alist.items) |v| {
-        print("val={s}\n", .{v.val});
+        log.info("val={s}", .{v.val});
     }
+
+    root.hello();
 }
 
 test "backoff" {
     const bo = backoff.Backoff{};
-    print("val={any}\n", .{bo.initial});
+    dbg("val={any}\n", .{bo.initial});
 
     var alist = std.ArrayList(Args).init(std.testing.allocator);
     defer alist.deinit();
@@ -48,15 +60,15 @@ test "backoff" {
     try alist.append(.{ .val = "four" });
 
     for (alist.items, 0..) |v, i| {
-        print("[{d}]val={s}\n", .{ i, v.val });
+        dbg("[{d}]val={s}\n", .{ i, v.val });
     } else {
-        print("else items\n", .{});
+        dbg("else items\n", .{});
     }
 
-    print("val[2]={s}\n", .{alist.items[2].val});
+    dbg("val[2]={s}\n", .{alist.items[2].val});
 
     const ms = std.time.milliTimestamp();
-    print("time={any}\n", .{ms});
+    dbg("time={any}\n", .{ms});
 }
 
 test "atomic" {
@@ -68,10 +80,10 @@ test "atomic" {
     _ = @atomicRmw(u64, &v, AtomicRmwOp.Add, 1e9, AtomicOrder.seq_cst);
     _ = @atomicLoad(u64, &v, AtomicOrder.seq_cst);
     // print("add={d}\n", .{b});
-    print("took {d}\n", .{tm.read()});
+    dbg("took {d}\n", .{tm.read()});
 }
 
-test "ip" {
+test "ip1" {
     const addr = try std.net.Address.resolveIp("127.0.0.1", 8080);
-    print("0x{X}, {d}\n", .{ addr.in.sa.addr, addr.in.sa.addr });
+    dbg("0x{X}, {d}\n", .{ addr.in.sa.addr, addr.in.sa.addr });
 }

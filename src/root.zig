@@ -1,5 +1,16 @@
 const std = @import("std");
-const print = std.debug.print;
+const dbg = std.debug.print;
+
+const log = std.log.scoped(.zgroup);
+
+pub fn hello() void {
+    log.info("hello", .{});
+}
+
+const Node = struct {
+    allocator: std.mem.Allocator,
+    self: @This(),
+};
 
 const Sample = packed struct {
     id: u64 = 2,
@@ -8,37 +19,33 @@ const Sample = packed struct {
     name: u128 = 0,
 };
 
-test "gen" {
+test "sample" {
     const n = @sizeOf(Sample);
-    print("size={any}\n", .{n});
+    dbg("size={any}\n", .{n});
 
     const hex = "0xf47ac10b58cc4372a5670e02b2c3d479";
-    const name = std.fmt.parseUnsigned(u128, hex, 0) catch return;
+    const name = try std.fmt.parseUnsigned(u128, hex, 0);
     const tmp = Sample{
         .main = true,
         .name = name,
     };
 
     const b = std.mem.asBytes(&tmp);
-    print("bytes={any}, ptr={any}, len={any}\n", .{ b, b.ptr, b.len });
+    dbg("bytes={any}, ptr={any}, len={any}\n", .{ b, b.ptr, b.len });
 
     const ptr: *Sample = @ptrFromInt(@intFromPtr(b));
-    print("id={any}, pos={any}, main={any}\n", .{ ptr.id, ptr.pos, ptr.main });
+    dbg("id={any}, pos={any}, main={any}\n", .{ ptr.id, ptr.pos, ptr.main });
 
-    print("name=0x{x}\n", .{ptr.name});
+    dbg("name=0x{x}\n", .{ptr.name});
 }
 
 test "timer" {
-    var tm = std.time.Timer.start() catch |err| {
-        print("err={any}\n", .{err});
-        return;
-    };
-
-    print("v={any}\n", .{tm.read()});
+    var tm = try std.time.Timer.start();
+    dbg("v={any}\n", .{tm.read()});
     std.time.sleep(std.time.ns_per_ms * 1000);
-    print("v={any}\n", .{tm.read()});
+    dbg("v={any}\n", .{tm.read()});
     std.time.sleep(1e9);
-    print("v={any}\n", .{tm.lap()});
+    dbg("v={any}\n", .{tm.lap()});
     std.time.sleep(1e9);
-    print("v={any}\n", .{tm.lap()});
+    dbg("v={any}\n", .{tm.lap()});
 }
