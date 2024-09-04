@@ -1,17 +1,15 @@
 const std = @import("std");
 const print = std.debug.print;
 const root = @import("root.zig");
-const Message = @import("root.zig").Message;
+const Group = @import("root.zig").Group();
 
 const log = std.log;
 
 pub fn main() !void {
-    log.info("size={any}, align={any}", .{ @sizeOf(Message), @alignOf(Message) });
-
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
-    const buf = try allocator.alloc(u8, @sizeOf(Message));
+    const buf = try allocator.alloc(u8, @sizeOf(Group.Message));
     defer allocator.free(buf); // release buffer
 
     const port = 8080;
@@ -27,16 +25,11 @@ pub fn main() !void {
 
     while (true) {
         const len = try std.posix.recvfrom(sock, buf, 0, &src_addr, &src_addrlen);
-        const ptr: *Message = @ptrCast(@alignCast(buf));
-        log.info("{d}: id={d}, name=0x{x}", .{ len, ptr.id, ptr.name });
-        const id = ptr.id;
-
-        ptr.id = 10; // reply
-        _ = std.posix.sendto(sock, std.mem.asBytes(ptr), 0, &src_addr, src_addrlen) catch |err| {
-            log.info("ack failed: {any}", .{err});
-        };
-
-        if (id == 0) {
+        const ptr: *Group.Message = @ptrCast(@alignCast(buf));
+        log.info("{d}: cmd={any}, name=0x{x}", .{ len, ptr.cmd, ptr.name });
+        const cmd = ptr.cmd;
+        _ = try std.posix.sendto(sock, std.mem.asBytes(ptr), 0, &src_addr, src_addrlen);
+        if (cmd == Group.Command.exit) {
             break;
         }
     }

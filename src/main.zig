@@ -37,14 +37,10 @@ pub fn main() !void {
         log.info("val={s}", .{v.val});
     }
 
-    var svr = root.Node{
-        .allocator = gpa.allocator(),
-        .name = "mygroup",
-    };
-
-    try svr.run();
+    var grp = try root.Group().init(gpa.allocator());
+    try grp.run();
     std.time.sleep(10e9);
-    svr.stop();
+    grp.stop();
     std.time.sleep(10e9);
 }
 
