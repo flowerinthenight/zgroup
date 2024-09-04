@@ -44,7 +44,13 @@ pub fn main() !void {
         log.info("val={s}", .{v.val});
     }
 
-    root.hello();
+    var svr = root.UdpServer{
+        .allocator = gpa.allocator(),
+    };
+
+    svr.run();
+    defer svr.stop();
+    try svr.add();
 }
 
 test "backoff" {

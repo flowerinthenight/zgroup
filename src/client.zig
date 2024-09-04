@@ -1,6 +1,7 @@
 const std = @import("std");
 const print = std.debug.print;
 const Payload = @import("main.zig").Payload;
+const root = @import("root.zig");
 
 const log = std.log;
 
@@ -22,6 +23,8 @@ pub fn main() !void {
     const addr = try std.net.Address.resolveIp("127.0.0.1", port);
     const sock = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM | std.posix.SOCK.CLOEXEC, 0);
     defer std.posix.close(sock);
+    try root.setReadTimeout(sock, 1_000_000);
+    try root.setWriteTimeout(sock, 1_000_000);
 
     var len: usize = undefined;
     try std.posix.connect(sock, &addr.any, addr.getOsSockLen());
