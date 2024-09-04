@@ -1,7 +1,7 @@
 const std = @import("std");
 const print = std.debug.print;
-const Payload = @import("main.zig").Payload;
 const root = @import("root.zig");
+const Message = @import("root.zig").Message;
 
 const log = std.log;
 
@@ -9,10 +9,10 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
-    const buf = try allocator.alloc(u8, @sizeOf(Payload));
+    const buf = try allocator.alloc(u8, @sizeOf(Message));
     defer allocator.free(buf); // release buffer
 
-    const ptr: *Payload = @ptrCast(@alignCast(buf));
+    const ptr: *Message = @ptrCast(@alignCast(buf));
     const hex = "0xf47ac10b58cc4372a5670e02b2c3d479";
     ptr.id = 2; // default
     ptr.name = try std.fmt.parseUnsigned(u128, hex, 0);

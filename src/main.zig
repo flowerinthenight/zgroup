@@ -15,13 +15,6 @@ pub const std_options = .{
     },
 };
 
-pub const Payload = packed struct {
-    id: u64 = 2,
-    name: u128 = 0,
-    pos: i64 = -1,
-    primary: bool = false,
-};
-
 const Args = struct {
     val: []const u8 = undefined,
 };
@@ -44,13 +37,15 @@ pub fn main() !void {
         log.info("val={s}", .{v.val});
     }
 
-    var svr = root.UdpServer{
+    var svr = root.Node{
         .allocator = gpa.allocator(),
+        .name = "mygroup",
     };
 
-    svr.run();
-    defer svr.stop();
-    try svr.add();
+    try svr.run();
+    std.time.sleep(10e9);
+    svr.stop();
+    std.time.sleep(10e9);
 }
 
 test "backoff" {

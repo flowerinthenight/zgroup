@@ -1,17 +1,17 @@
 const std = @import("std");
 const print = std.debug.print;
-const Payload = @import("main.zig").Payload;
 const root = @import("root.zig");
+const Message = @import("root.zig").Message;
 
 const log = std.log;
 
 pub fn main() !void {
-    log.info("size={any}, align={any}", .{ @sizeOf(Payload), @alignOf(Payload) });
+    log.info("size={any}, align={any}", .{ @sizeOf(Message), @alignOf(Message) });
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
-    const buf = try allocator.alloc(u8, @sizeOf(Payload));
+    const buf = try allocator.alloc(u8, @sizeOf(Message));
     defer allocator.free(buf); // release buffer
 
     const port = 8080;
@@ -27,7 +27,7 @@ pub fn main() !void {
 
     while (true) {
         const len = try std.posix.recvfrom(sock, buf, 0, &src_addr, &src_addrlen);
-        const ptr: *Payload = @ptrCast(@alignCast(buf));
+        const ptr: *Message = @ptrCast(@alignCast(buf));
         log.info("{d}: id={d}, name=0x{x}", .{ len, ptr.id, ptr.name });
         const id = ptr.id;
 
