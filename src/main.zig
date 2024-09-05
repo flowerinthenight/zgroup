@@ -93,6 +93,25 @@ pub fn main() !void {
     }
 }
 
+test "autohashmap" {
+    const Value = struct {
+        id: u32 = 0,
+    };
+
+    var hm = std.AutoHashMap(usize, Value).init(std.testing.allocator);
+    defer hm.deinit();
+    try hm.put(hm.count(), .{ .id = 100 });
+    try hm.put(hm.count(), .{ .id = 101 });
+
+    const ptr = hm.getPtr(1).?;
+    ptr.* = .{ .id = 201 };
+
+    var iter = hm.iterator();
+    while (iter.next()) |entry| {
+        dbg("{any}, {d}\n", .{ entry.key_ptr.*, entry.value_ptr.id });
+    }
+}
+
 test "backoff" {
     const bo = backoff.Backoff{};
     dbg("val={any}\n", .{bo.initial});

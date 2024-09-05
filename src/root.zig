@@ -1,5 +1,4 @@
 const std = @import("std");
-const dbg = std.debug.print;
 const AtomicOrder = std.builtin.AtomicOrder;
 const AtomicRmwOp = std.builtin.AtomicRmwOp;
 
@@ -110,7 +109,7 @@ pub fn Group() type {
             defer self.allocator.free(buf); // release buffer
 
             const msg: *Message = @ptrCast(@alignCast(buf));
-            msg.cmd = Command.join;
+            msg.cmd = .join;
             msg.name = try std.fmt.parseUnsigned(u128, name, 0);
 
             log.info("joining through {s}:{any}/{s}...", .{ dst_ip, dst_port, name });
@@ -138,7 +137,7 @@ pub fn Group() type {
             const len = try std.posix.recv(sock, buf, 0);
 
             switch (msg.cmd) {
-                Command.ack => {
+                .ack => {
                     log.info("{d}: reply: cmd={any}, name=0x{x}", .{ len, msg.cmd, msg.name });
 
                     const hex = try std.fmt.parseUnsigned(u128, self.name, 0);
@@ -153,7 +152,7 @@ pub fn Group() type {
                         log.info("join: key={s}", .{key});
 
                         self.members_mtx.lock();
-                        try self.members.put(key, .{ .state = .alive });
+                        self.members.put(key, .{ .state = .alive }) catch {};
                         self.members_mtx.unlock();
                     }
                 },
@@ -168,6 +167,7 @@ pub fn Group() type {
         ip: []u8 = undefined,
         port: u16 = 8080,
         protocol_time: u64 = std.time.ns_per_s * 2,
+        ping_req_k: u32 = 1,
         mutex: std.Thread.Mutex = .{},
         members: std.StringHashMap(MemberData) = undefined,
         members_mtx: std.Thread.Mutex = .{},
@@ -234,7 +234,7 @@ pub fn Group() type {
                 log.info("{d}: cmd={any}, name=0x{x}", .{ len, msg.cmd, msg.name });
 
                 switch (msg.cmd) {
-                    Command.join => {
+                    .join => {
                         const hex = try std.fmt.parseUnsigned(u128, self.name, 0);
                         if (msg.name == hex) {
                             log.info("join: cmd={any}", .{msg.cmd});
@@ -254,7 +254,7 @@ pub fn Group() type {
                             log.info("join: key={s}", .{key});
 
                             self.members_mtx.lock();
-                            try self.members.put(key, .{ .state = .alive });
+                            self.members.put(key, .{ .state = .alive }) catch {};
                             self.members_mtx.unlock();
                         }
                     },
