@@ -16,7 +16,7 @@ pub const std_options = .{
 };
 
 const Args = struct {
-    val: []const u8 = undefined,
+    args: []u8 = undefined,
 };
 
 pub fn main() !void {
@@ -26,22 +26,71 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var arena = std.heap.ArenaAllocator.init(gpa.allocator());
     defer arena.deinit(); // destroy arena in one go
-    const allocator = arena.allocator();
-    var args = try std.process.argsWithAllocator(allocator);
-    var alist = std.ArrayList(Args).init(allocator);
-    while (args.next()) |v| {
-        try alist.append(.{ .val = v });
+
+    var args = try std.process.argsWithAllocator(arena.allocator());
+    var hm = std.AutoHashMap(usize, Args).init(arena.allocator());
+    var i: usize = 0;
+    while (args.next()) |val| : (i += 1) {
+        const key = try std.fmt.allocPrint(arena.allocator(), "{s}", .{val});
+        try hm.put(i, .{ .args = key });
     }
 
-    for (alist.items) |v| {
-        log.info("val={s}", .{v.val});
+    // Expected:
+    // [0] = bin
+    // [1] = name
+    // [2] = member addr:port
+    // [3] = join addr:port
+
+    var iter = hm.iterator();
+    while (iter.next()) |entry| {
+        log.info("{any}, {s}", .{ entry.key_ptr.*, entry.value_ptr.args });
     }
 
-    var grp = try root.Group().init(gpa.allocator());
+    if (hm.count() < 4) {
+        log.err("invalid args", .{});
+        return;
+    }
+
+    var config = root.Group().Config{ .name = hm.getEntry(1).?.value_ptr.args };
+    var it = std.mem.split(u8, hm.getEntry(2).?.value_ptr.args, ":");
+    if (it.next()) |val| {
+        config.addr = try std.fmt.allocPrint(arena.allocator(), "{s}", .{val});
+    }
+
+    if (it.next()) |val| {
+        config.port = try std.fmt.parseUnsigned(u16, val, 10);
+    }
+
+    var dst_ip: []u8 = undefined;
+    it = std.mem.split(u8, hm.getEntry(3).?.value_ptr.args, ":");
+    if (it.next()) |val| {
+        dst_ip = try std.fmt.allocPrint(arena.allocator(), "{s}", .{val});
+    }
+
+    var dst_port: u16 = 0;
+    if (it.next()) |val| {
+        if (val.len > 0) {
+            dst_port = try std.fmt.parseUnsigned(u16, val, 10);
+        }
+    }
+
+    var grp = try root.Group().init(gpa.allocator(), &config);
     try grp.run();
-    std.time.sleep(10e9);
-    grp.stop();
-    std.time.sleep(10e9);
+    defer grp.deinit();
+
+    i = 0; // reuse
+    while (true) : (i += 1) {
+        std.time.sleep(std.time.ns_per_s * 1);
+        if (i == 10 and dst_ip.len > 0) {
+            try grp.join(
+                hm.getEntry(1).?.value_ptr.args,
+                config.addr,
+                config.port,
+                dst_ip,
+                dst_port,
+            );
+        }
+    }
 }
 
 test "backoff" {
@@ -77,10 +126,12 @@ test "atomic" {
     _ = @atomicRmw(u64, &v, AtomicRmwOp.Add, 1e9, AtomicOrder.seq_cst);
     _ = @atomicLoad(u64, &v, AtomicOrder.seq_cst);
     // print("add={d}\n", .{b});
-    dbg("took {d}\n", .{tm.read()});
+    dbg("took {any}\n", .{std.fmt.fmtDuration(tm.read())});
 }
 
 test "ip1" {
     const addr = try std.net.Address.resolveIp("127.0.0.1", 8080);
-    dbg("0x{X}, {d}\n", .{ addr.in.sa.addr, addr.in.sa.addr });
+    const ab = std.mem.asBytes(&addr.in.sa.addr);
+    dbg("0x{X}, {d}, {any}\n", .{ addr.in.sa.addr, addr.in.sa.addr, ab });
+    dbg("{d}.{d}.{d}.{d}\n", .{ ab[0], ab[1], ab[2], ab[3] });
 }
