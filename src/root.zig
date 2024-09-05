@@ -42,11 +42,17 @@ pub fn Group() type {
         };
 
         pub const Config = struct {
-            name: []u8 = undefined, // fmt: hex, i.e. 0xfff...
-            ip: []u8 = undefined, // fmt: ipaddr, i.e. 0.0.0.0
-            port: u16 = 0, // i.e. 8080
+            // Format: hexstring, i.e. "0xf47ac10b58cc4372a5670e02b2c3d479".
+            name: []u8 = undefined,
+
+            // Format: IP address, i.e. "0.0.0.0".
+            ip: []u8 = undefined,
+
+            // UDP port for this node, i.e. 8080.
+            port: u16 = 0,
         };
 
+        /// Create an instance of Self based on Config.
         pub fn init(allocator: std.mem.Allocator, config: *const Config) !Self {
             return Self{
                 .allocator = allocator,
@@ -57,6 +63,7 @@ pub fn Group() type {
             };
         }
 
+        /// Start group membership tracking.
         pub fn run(self: *Self) !void {
             const key = try std.fmt.allocPrint(
                 self.allocator,
@@ -71,6 +78,8 @@ pub fn Group() type {
             ticker.detach();
         }
 
+        /// Cleanup Self instance. At the moment, it is expected for this
+        /// code to be long running until process is terminated.
         pub fn deinit(self: *Self) void {
             // TODO:
             // 1. Free keys in members.
@@ -88,7 +97,7 @@ pub fn Group() type {
             );
         }
 
-        /// Expected name is UUID string in hex, i.e. "0xf47ac10b58cc4372a5670e02b2c3d479".
+        /// Ask an instance to join an existing group.
         pub fn join(
             self: *Self,
             name: []const u8,
@@ -164,6 +173,7 @@ pub fn Group() type {
         members_mtx: std.Thread.Mutex = .{},
         incarnation: u64 = 0,
 
+        // Main loop for initiating the SWIM protocol.
         fn tick(self: *Self) !void {
             while (true) {
                 var tm = try std.time.Timer.start();
@@ -187,6 +197,7 @@ pub fn Group() type {
             }
         }
 
+        // Run internal UDP server.
         fn listen(self: *Self) !void {
             defer log.info("listen done", .{});
             const buf = try self.allocator.alloc(u8, @sizeOf(Message));
