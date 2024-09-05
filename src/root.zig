@@ -88,13 +88,7 @@ pub fn Group() type {
 
             log.info("deinit:", .{});
 
-            _ = @atomicRmw(
-                u64,
-                &self.incarnation,
-                AtomicRmwOp.Add,
-                1,
-                AtomicOrder.seq_cst,
-            );
+            self.members.deinit();
         }
 
         /// Ask an instance to join an existing group.
@@ -106,23 +100,19 @@ pub fn Group() type {
             dst_ip: []const u8,
             dst_port: u16,
         ) !void {
+            log.info("joining through {s}:{any}/{s}...", .{ dst_ip, dst_port, name });
+
             const buf = try self.allocator.alloc(u8, @sizeOf(Message));
             defer self.allocator.free(buf); // release buffer
-
             const msg: *Message = @ptrCast(@alignCast(buf));
             msg.cmd = .join;
             msg.name = try std.fmt.parseUnsigned(u128, name, 0);
-
-            log.info("joining through {s}:{any}/{s}...", .{ dst_ip, dst_port, name });
-
             const src_addr = try std.net.Address.resolveIp(src_ip, src_port);
             const dst_addr = try std.net.Address.resolveIp(dst_ip, dst_port);
-
             msg.src_ip = src_addr.in.sa.addr;
             msg.src_port = src_port;
             msg.dst_ip = dst_addr.in.sa.addr;
             msg.dst_port = dst_port;
-
             const sock = try std.posix.socket(
                 std.posix.AF.INET,
                 std.posix.SOCK.DGRAM | std.posix.SOCK.CLOEXEC,
@@ -130,9 +120,8 @@ pub fn Group() type {
             );
 
             defer std.posix.close(sock);
-            try setReadTimeout(sock, 1_000_000);
-            try setWriteTimeout(sock, 1_000_000);
-
+            try setReadTimeout(sock, 5_000_000);
+            try setWriteTimeout(sock, 5_000_000);
             try std.posix.connect(sock, &dst_addr.any, dst_addr.getOsSockLen());
             _ = try std.posix.write(sock, std.mem.asBytes(msg));
             const len = try std.posix.recv(sock, buf, 0);
@@ -210,7 +199,7 @@ pub fn Group() type {
                 if (found) {
                     const ptr = self.members.getPtr(key.*).?;
                     ptr.sweep = ~ptr.sweep;
-                    _ = self.pingReq(key) catch {};
+                    _ = self.ping(key) catch {};
                 } else {
                     self.sweep = ~self.sweep;
                     skip = true;
@@ -242,12 +231,12 @@ pub fn Group() type {
 
         // Run internal UDP server.
         fn listen(self: *Self) !void {
+            log.info("Starting UDP server on :{any}...", .{self.port});
             defer log.info("listen done", .{});
+
             const buf = try self.allocator.alloc(u8, @sizeOf(Message));
             defer self.allocator.free(buf); // release buffer
-
-            log.info("Starting UDP server on :{any}...", .{self.port});
-            const addr = try std.net.Address.resolveIp("0.0.0.0", self.port);
+            const addr = try std.net.Address.resolveIp(self.ip, self.port);
             const sock = try std.posix.socket(
                 std.posix.AF.INET,
                 std.posix.SOCK.DGRAM,
@@ -255,13 +244,13 @@ pub fn Group() type {
             );
 
             defer std.posix.close(sock);
-            try setWriteTimeout(sock, 1_000_000);
+            try setWriteTimeout(sock, 5_000_000);
             try std.posix.bind(sock, &addr.any, addr.getOsSockLen());
             var src_addr: std.os.linux.sockaddr = undefined;
             var src_addrlen: std.posix.socklen_t = @sizeOf(std.os.linux.sockaddr);
 
             while (true) {
-                const len = try std.posix.recvfrom(
+                _ = try std.posix.recvfrom(
                     sock,
                     buf,
                     0,
@@ -274,7 +263,6 @@ pub fn Group() type {
 
                 var ack = true;
                 const msg: *Message = @ptrCast(@alignCast(buf));
-                log.info("{d}: cmd={any}, name=0x{x}", .{ len, msg.cmd, msg.name });
 
                 switch (msg.cmd) {
                     .join => {
@@ -299,7 +287,11 @@ pub fn Group() type {
                             self.members_mtx.lock();
                             self.members.put(key, .{ .state = .alive }) catch {};
                             self.members_mtx.unlock();
-                        }
+                        } else ack = false;
+                    },
+                    .ping => {
+                        const hex = try std.fmt.parseUnsigned(u128, self.name, 0);
+                        if (msg.name != hex) ack = false;
                     },
                     else => {
                         log.err("unsupported command: {any}", .{msg.cmd});
@@ -320,7 +312,7 @@ pub fn Group() type {
             }
         }
 
-        fn pingReq(self: *Self, key: *[]const u8) !bool {
+        fn ping(self: *Self, key: *[]const u8) !bool {
             var ip: []u8 = undefined;
             defer {
                 if (ip.len > 0) self.allocator.free(ip);
@@ -336,9 +328,39 @@ pub fn Group() type {
                 port = try std.fmt.parseUnsigned(u16, val, 10);
             }
 
-            log.info("ping-req: {s}:{d}", .{ ip, port });
             if (std.mem.eql(u8, ip, self.ip) and port == self.port) {
                 return false;
+            }
+
+            // Start direct ping.
+            log.info("ping: {s}:{d}", .{ ip, port });
+
+            const buf = try self.allocator.alloc(u8, @sizeOf(Message));
+            defer self.allocator.free(buf); // release buffer
+            const msg: *Message = @ptrCast(@alignCast(buf));
+            msg.cmd = .ping;
+            msg.name = try std.fmt.parseUnsigned(u128, self.name, 0);
+            const addr = try std.net.Address.resolveIp(ip, port);
+            const sock = try std.posix.socket(
+                std.posix.AF.INET,
+                std.posix.SOCK.DGRAM | std.posix.SOCK.CLOEXEC,
+                0,
+            );
+
+            defer std.posix.close(sock);
+            try setReadTimeout(sock, 5_000_000);
+            try setWriteTimeout(sock, 5_000_000);
+            try std.posix.connect(sock, &addr.any, addr.getOsSockLen());
+            _ = try std.posix.write(sock, std.mem.asBytes(msg));
+            const len = try std.posix.recv(sock, buf, 0);
+
+            switch (msg.cmd) {
+                .ack => {
+                    log.info("{d}: ack from {s}:{d}", .{ len, ip, port });
+                },
+                else => {
+                    log.err("todo: ping-req", .{});
+                },
             }
 
             return true;
