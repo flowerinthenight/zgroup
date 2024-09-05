@@ -38,6 +38,7 @@ pub fn Group() type {
 
         pub const MemberData = struct {
             state: MemberState = .alive,
+            sweep: u1 = 0,
         };
 
         pub const Config = struct {
@@ -171,25 +172,67 @@ pub fn Group() type {
         mutex: std.Thread.Mutex = .{},
         members: std.StringHashMap(MemberData) = undefined,
         members_mtx: std.Thread.Mutex = .{},
+        sweep: u1 = 1,
         incarnation: u64 = 0,
 
         // Main loop for initiating the SWIM protocol.
         fn tick(self: *Self) !void {
-            while (true) {
+            var i: usize = 0;
+            while (true) : (i += 1) {
+                var skip = false;
                 var tm = try std.time.Timer.start();
                 self.members_mtx.lock();
+
+                // Pre-check:
+                // var iter = self.members.iterator();
+                // while (iter.next()) |entry| {
+                //     log.info("[{d}]tick1: {s}: key={s}, state={any}, sweep={d}, self_sweep={d}", .{
+                //         i,
+                //         self.name,
+                //         entry.key_ptr.*,
+                //         entry.value_ptr.state,
+                //         entry.value_ptr.sweep,
+                //         self.sweep,
+                //     });
+                // }
+
+                var key: *[]const u8 = undefined;
+                var found = false;
                 var iter = self.members.iterator();
                 while (iter.next()) |entry| {
-                    log.info("tick: {s}: key={s}, value={any}", .{
-                        self.name,
-                        entry.key_ptr.*,
-                        entry.value_ptr.state,
-                    });
+                    if (entry.value_ptr.sweep != self.sweep) {
+                        key = entry.key_ptr;
+                        found = true;
+                        break;
+                    }
                 }
 
+                if (found) {
+                    const ptr = self.members.getPtr(key.*).?;
+                    ptr.sweep = ~ptr.sweep;
+                    _ = self.pingReq(key) catch {};
+                } else {
+                    self.sweep = ~self.sweep;
+                    skip = true;
+                }
+
+                // Post-check:
+                // iter = self.members.iterator();
+                // while (iter.next()) |entry| {
+                //     log.info("[{d}]tick2: {s}: key={s}, state={any}, sweep={d}, self_sweep={d}", .{
+                //         i,
+                //         self.name,
+                //         entry.key_ptr.*,
+                //         entry.value_ptr.state,
+                //         entry.value_ptr.sweep,
+                //         self.sweep,
+                //     });
+                // }
+
                 self.members_mtx.unlock();
+
                 const elapsed = tm.read();
-                if (elapsed < self.protocol_time) {
+                if (elapsed < self.protocol_time and !skip) {
                     const left = self.protocol_time - elapsed;
                     log.info("tick: left={any}", .{std.fmt.fmtDuration(left)});
                     std.time.sleep(left);
@@ -275,6 +318,30 @@ pub fn Group() type {
                     );
                 }
             }
+        }
+
+        fn pingReq(self: *Self, key: *[]const u8) !bool {
+            var ip: []u8 = undefined;
+            defer {
+                if (ip.len > 0) self.allocator.free(ip);
+            }
+
+            var port: u16 = 0;
+            var it = std.mem.split(u8, key.*, ":");
+            if (it.next()) |val| {
+                ip = try std.fmt.allocPrint(self.allocator, "{s}", .{val});
+            }
+
+            if (it.next()) |val| {
+                port = try std.fmt.parseUnsigned(u16, val, 10);
+            }
+
+            log.info("ping-req: {s}:{d}", .{ ip, port });
+            if (std.mem.eql(u8, ip, self.ip) and port == self.port) {
+                return false;
+            }
+
+            return true;
         }
     };
 }
