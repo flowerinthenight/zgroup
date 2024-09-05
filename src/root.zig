@@ -227,7 +227,7 @@ pub fn Group() type {
                 );
 
                 var tm = try std.time.Timer.start();
-                defer log.info("took {any}us", .{tm.read() / std.time.ns_per_us});
+                defer log.info("process took {any}", .{std.fmt.fmtDuration(tm.read())});
 
                 var ack = true;
                 const msg: *Message = @ptrCast(@alignCast(buf));
