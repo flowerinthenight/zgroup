@@ -54,7 +54,7 @@ pub fn main() !void {
     var config = root.Group().Config{ .name = hm.getEntry(1).?.value_ptr.args };
     var it = std.mem.split(u8, hm.getEntry(2).?.value_ptr.args, ":");
     if (it.next()) |val| {
-        config.addr = try std.fmt.allocPrint(arena.allocator(), "{s}", .{val});
+        config.ip = try std.fmt.allocPrint(arena.allocator(), "{s}", .{val});
     }
 
     if (it.next()) |val| {
@@ -84,7 +84,7 @@ pub fn main() !void {
         if (i == 10 and dst_ip.len > 0) {
             try grp.join(
                 hm.getEntry(1).?.value_ptr.args,
-                config.addr,
+                config.ip,
                 config.port,
                 dst_ip,
                 dst_port,

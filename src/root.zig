@@ -43,7 +43,7 @@ pub fn Group() type {
 
         pub const Config = struct {
             name: []u8 = undefined, // fmt: hex, i.e. 0xfff...
-            addr: []u8 = undefined, // fmt: ipaddr, i.e. 0.0.0.0
+            ip: []u8 = undefined, // fmt: ipaddr, i.e. 0.0.0.0
             port: u16 = 0, // i.e. 8080
         };
 
@@ -51,7 +51,7 @@ pub fn Group() type {
             return Self{
                 .allocator = allocator,
                 .name = config.name,
-                .ipaddr = config.addr,
+                .ip = config.ip,
                 .port = config.port,
                 .members = std.StringHashMap(MemberData).init(allocator),
             };
@@ -61,7 +61,7 @@ pub fn Group() type {
             const key = try std.fmt.allocPrint(
                 self.allocator,
                 "{s}:{d}",
-                .{ self.ipaddr, self.port },
+                .{ self.ip, self.port },
             );
 
             try self.members.put(key, .{ .state = .alive });
@@ -127,12 +127,36 @@ pub fn Group() type {
             try std.posix.connect(sock, &dst_addr.any, dst_addr.getOsSockLen());
             _ = try std.posix.write(sock, std.mem.asBytes(msg));
             const len = try std.posix.recv(sock, buf, 0);
-            log.info("{d}: reply: cmd={any}, name=0x{x}", .{ len, msg.cmd, msg.name });
+
+            switch (msg.cmd) {
+                Command.ack => {
+                    log.info("{d}: reply: cmd={any}, name=0x{x}", .{ len, msg.cmd, msg.name });
+
+                    const hex = try std.fmt.parseUnsigned(u128, self.name, 0);
+                    if (hex == msg.name) {
+                        const ipb = std.mem.asBytes(&msg.dst_ip);
+                        const key = try std.fmt.allocPrint(
+                            self.allocator,
+                            "{d}.{d}.{d}.{d}:{d}",
+                            .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.dst_port },
+                        );
+
+                        log.info("join: key={s}", .{key});
+
+                        self.members_mtx.lock();
+                        try self.members.put(key, .{ .state = .alive });
+                        self.members_mtx.unlock();
+                    }
+                },
+                else => {
+                    log.err("unsupported command: {any}", .{msg.cmd});
+                },
+            }
         }
 
         allocator: std.mem.Allocator,
         name: []u8 = undefined,
-        ipaddr: []u8 = undefined,
+        ip: []u8 = undefined,
         port: u16 = 8080,
         protocol_time: u64 = std.time.ns_per_s * 2,
         mutex: std.Thread.Mutex = .{},
@@ -194,31 +218,51 @@ pub fn Group() type {
                 var tm = try std.time.Timer.start();
                 defer log.info("took {any}us", .{tm.read() / std.time.ns_per_us});
 
+                var ack = true;
                 const msg: *Message = @ptrCast(@alignCast(buf));
                 log.info("{d}: cmd={any}, name=0x{x}", .{ len, msg.cmd, msg.name });
 
                 switch (msg.cmd) {
                     Command.join => {
-                        log.info("join: cmd={any}", .{msg.cmd});
-                        log.info("join: name=0x{x}", .{msg.name});
-                        log.info("join: src_ip={any}", .{msg.src_ip});
-                        log.info("join: src_port={d}", .{msg.src_port});
-                        log.info("join: dst_ip={any}", .{msg.dst_ip});
-                        log.info("join: dst_port={d}", .{msg.dst_port});
+                        const hex = try std.fmt.parseUnsigned(u128, self.name, 0);
+                        if (msg.name == hex) {
+                            log.info("join: cmd={any}", .{msg.cmd});
+                            log.info("join: name=0x{x}", .{msg.name});
+                            log.info("join: src_ip={any}", .{msg.src_ip});
+                            log.info("join: src_port={d}", .{msg.src_port});
+                            log.info("join: dst_ip={any}", .{msg.dst_ip});
+                            log.info("join: dst_port={d}", .{msg.dst_port});
+
+                            const ipb = std.mem.asBytes(&msg.src_ip);
+                            const key = try std.fmt.allocPrint(
+                                self.allocator,
+                                "{d}.{d}.{d}.{d}:{d}",
+                                .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.src_port },
+                            );
+
+                            log.info("join: key={s}", .{key});
+
+                            self.members_mtx.lock();
+                            try self.members.put(key, .{ .state = .alive });
+                            self.members_mtx.unlock();
+                        }
                     },
                     else => {
                         log.err("unsupported command: {any}", .{msg.cmd});
+                        ack = false;
                     },
                 }
 
-                msg.cmd = .ack;
-                _ = try std.posix.sendto(
-                    sock,
-                    std.mem.asBytes(msg),
-                    0,
-                    &src_addr,
-                    src_addrlen,
-                );
+                if (ack) {
+                    msg.cmd = .ack;
+                    _ = try std.posix.sendto(
+                        sock,
+                        std.mem.asBytes(msg),
+                        0,
+                        &src_addr,
+                        src_addrlen,
+                    );
+                }
             }
         }
     };
