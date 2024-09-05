@@ -124,11 +124,11 @@ pub fn Group() type {
             try setWriteTimeout(sock, 5_000_000);
             try std.posix.connect(sock, &dst_addr.any, dst_addr.getOsSockLen());
             _ = try std.posix.write(sock, std.mem.asBytes(msg));
-            const len = try std.posix.recv(sock, buf, 0);
+            _ = try std.posix.recv(sock, buf, 0);
 
             switch (msg.cmd) {
                 .ack => {
-                    log.info("{d}: reply: cmd={any}, name=0x{x}", .{ len, msg.cmd, msg.name });
+                    // log.info("{d}: reply: cmd={any}, name=0x{x}", .{ len, msg.cmd, msg.name });
 
                     const hex = try std.fmt.parseUnsigned(u128, self.name, 0);
                     if (hex == msg.name) {
@@ -268,12 +268,12 @@ pub fn Group() type {
                     .join => {
                         const hex = try std.fmt.parseUnsigned(u128, self.name, 0);
                         if (msg.name == hex) {
-                            log.info("join: cmd={any}", .{msg.cmd});
-                            log.info("join: name=0x{x}", .{msg.name});
-                            log.info("join: src_ip={any}", .{msg.src_ip});
-                            log.info("join: src_port={d}", .{msg.src_port});
-                            log.info("join: dst_ip={any}", .{msg.dst_ip});
-                            log.info("join: dst_port={d}", .{msg.dst_port});
+                            // log.info("join: cmd={any}", .{msg.cmd});
+                            // log.info("join: name=0x{x}", .{msg.name});
+                            // log.info("join: src_ip={any}", .{msg.src_ip});
+                            // log.info("join: src_port={d}", .{msg.src_port});
+                            // log.info("join: dst_ip={any}", .{msg.dst_ip});
+                            // log.info("join: dst_port={d}", .{msg.dst_port});
 
                             const ipb = std.mem.asBytes(&msg.src_ip);
                             const key = try std.fmt.allocPrint(
@@ -282,7 +282,7 @@ pub fn Group() type {
                                 .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.src_port },
                             );
 
-                            log.info("join: key={s}", .{key});
+                            // log.info("join: key={s}", .{key});
 
                             self.members_mtx.lock();
                             self.members.put(key, .{ .state = .alive }) catch {};
