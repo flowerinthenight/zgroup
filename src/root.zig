@@ -158,33 +158,18 @@ pub fn Group() type {
         port: u16 = 8080,
         protocol_time: u64 = std.time.ns_per_s * 2,
         ping_req_k: u32 = 1,
-        mutex: std.Thread.Mutex = .{},
         members: std.StringHashMap(MemberData) = undefined,
         members_mtx: std.Thread.Mutex = .{},
         sweep: u1 = 1,
         incarnation: u64 = 0,
 
-        // Main loop for initiating the SWIM protocol.
+        // Thread running the SWIM protocol.
         fn tick(self: *Self) !void {
             var i: usize = 0;
             while (true) : (i += 1) {
                 var skip = false;
                 var tm = try std.time.Timer.start();
                 self.members_mtx.lock();
-
-                // Pre-check:
-                // var iter = self.members.iterator();
-                // while (iter.next()) |entry| {
-                //     log.info("[{d}]tick1: {s}: key={s}, state={any}, sweep={d}, self_sweep={d}", .{
-                //         i,
-                //         self.name,
-                //         entry.key_ptr.*,
-                //         entry.value_ptr.state,
-                //         entry.value_ptr.sweep,
-                //         self.sweep,
-                //     });
-                // }
-
                 var key: *[]const u8 = undefined;
                 var found = false;
                 var iter = self.members.iterator();
@@ -199,26 +184,13 @@ pub fn Group() type {
                 if (found) {
                     const ptr = self.members.getPtr(key.*).?;
                     ptr.sweep = ~ptr.sweep;
+                    self.members_mtx.unlock();
                     _ = self.ping(key) catch {};
                 } else {
                     self.sweep = ~self.sweep;
+                    self.members_mtx.unlock();
                     skip = true;
                 }
-
-                // Post-check:
-                // iter = self.members.iterator();
-                // while (iter.next()) |entry| {
-                //     log.info("[{d}]tick2: {s}: key={s}, state={any}, sweep={d}, self_sweep={d}", .{
-                //         i,
-                //         self.name,
-                //         entry.key_ptr.*,
-                //         entry.value_ptr.state,
-                //         entry.value_ptr.sweep,
-                //         self.sweep,
-                //     });
-                // }
-
-                self.members_mtx.unlock();
 
                 const elapsed = tm.read();
                 if (elapsed < self.protocol_time and !skip) {
