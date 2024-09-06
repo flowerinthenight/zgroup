@@ -11,7 +11,7 @@ const log = std.log;
 pub const std_options = .{
     .log_level = .info,
     .log_scope_levels = &[_]std.log.ScopeLevel{
-        .{ .scope = .zgroup, .level = .info },
+        .{ .scope = .zgroup, .level = .debug },
     },
 };
 

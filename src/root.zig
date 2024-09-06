@@ -86,7 +86,7 @@ pub fn Group() type {
             // 2. Release members.
             // 3. See how to gracefuly exit threads.
 
-            log.info("deinit:", .{});
+            log.debug("deinit:", .{});
 
             self.members.deinit();
         }
@@ -100,7 +100,7 @@ pub fn Group() type {
             dst_ip: []const u8,
             dst_port: u16,
         ) !void {
-            log.info("joining through {s}:{any}/{s}...", .{ dst_ip, dst_port, name });
+            log.info("joining via {s}:{any}, name={s}...", .{ dst_ip, dst_port, name });
 
             const buf = try self.allocator.alloc(u8, @sizeOf(Message));
             defer self.allocator.free(buf); // release buffer
@@ -128,8 +128,6 @@ pub fn Group() type {
 
             switch (msg.cmd) {
                 .ack => {
-                    // log.info("{d}: reply: cmd={any}, name=0x{x}", .{ len, msg.cmd, msg.name });
-
                     const hex = try std.fmt.parseUnsigned(u128, self.name, 0);
                     if (hex == msg.name) {
                         const ipb = std.mem.asBytes(&msg.dst_ip);
@@ -139,7 +137,7 @@ pub fn Group() type {
                             .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.dst_port },
                         );
 
-                        log.info("join: key={s}", .{key});
+                        log.debug("join: key={s}", .{key});
 
                         self.members_mtx.lock();
                         self.members.put(key, .{ .state = .alive }) catch {};
@@ -195,7 +193,7 @@ pub fn Group() type {
                 const elapsed = tm.read();
                 if (elapsed < self.protocol_time and !skip) {
                     const left = self.protocol_time - elapsed;
-                    log.info("tick: left={any}", .{std.fmt.fmtDuration(left)});
+                    log.debug("tick: left={any}", .{std.fmt.fmtDuration(left)});
                     std.time.sleep(left);
                 }
             }
@@ -203,8 +201,8 @@ pub fn Group() type {
 
         // Run internal UDP server.
         fn listen(self: *Self) !void {
-            log.info("Starting UDP server on :{any}...", .{self.port});
-            defer log.info("listen done", .{});
+            log.info("Starting UDP server on :{d}...", .{self.port});
+            defer log.debug("listen done", .{});
 
             const buf = try self.allocator.alloc(u8, @sizeOf(Message));
             defer self.allocator.free(buf); // release buffer
@@ -231,7 +229,7 @@ pub fn Group() type {
                 );
 
                 var tm = try std.time.Timer.start();
-                defer log.info("process took {any}", .{std.fmt.fmtDuration(tm.read())});
+                defer log.debug("process took {any}", .{std.fmt.fmtDuration(tm.read())});
 
                 var ack = true;
                 const msg: *Message = @ptrCast(@alignCast(buf));
@@ -296,7 +294,7 @@ pub fn Group() type {
             }
 
             // Start direct ping.
-            log.info("ping: {s}:{d}", .{ ip, port });
+            log.debug("ping: {s}:{d}", .{ ip, port });
 
             const buf = try self.allocator.alloc(u8, @sizeOf(Message));
             defer self.allocator.free(buf); // release buffer
@@ -319,7 +317,7 @@ pub fn Group() type {
 
             switch (msg.cmd) {
                 .ack => {
-                    log.info("{d}: ack from {s}:{d}", .{ len, ip, port });
+                    log.debug("{d}: ack from {s}:{d}", .{ len, ip, port });
                 },
                 else => {
                     log.err("todo: ping-req", .{});
