@@ -240,21 +240,12 @@ pub fn Group() type {
                     .join => {
                         const hex = try std.fmt.parseUnsigned(u128, self.name, 0);
                         if (msg.name == hex) {
-                            // log.info("join: cmd={any}", .{msg.cmd});
-                            // log.info("join: name=0x{x}", .{msg.name});
-                            // log.info("join: src_ip={any}", .{msg.src_ip});
-                            // log.info("join: src_port={d}", .{msg.src_port});
-                            // log.info("join: dst_ip={any}", .{msg.dst_ip});
-                            // log.info("join: dst_port={d}", .{msg.dst_port});
-
                             const ipb = std.mem.asBytes(&msg.src_ip);
                             const key = try std.fmt.allocPrint(
                                 self.allocator,
                                 "{d}.{d}.{d}.{d}:{d}",
                                 .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.src_port },
                             );
-
-                            // log.info("join: key={s}", .{key});
 
                             self.members_mtx.lock();
                             self.members.put(key, .{ .state = .alive }) catch {};
