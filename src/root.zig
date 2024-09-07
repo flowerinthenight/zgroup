@@ -24,7 +24,7 @@ pub fn Group() type {
             nack,
             join,
             ping,
-            ping_req,
+            indirect_ping,
             ack,
             suspect,
             alive,
@@ -40,6 +40,7 @@ pub fn Group() type {
         pub const MemberData = struct {
             state: MemberState = .alive,
             ping_sweep: u1 = 0,
+            ping_req_sweep: u1 = 0,
         };
 
         pub const Config = struct {
@@ -121,8 +122,8 @@ pub fn Group() type {
             var ret = false;
             switch (msg.cmd) {
                 .ack => {
-                    const hex = try std.fmt.parseUnsigned(u128, self.name, 0);
-                    if (hex == msg.name) {
+                    const sname = try std.fmt.parseUnsigned(u128, self.name, 0);
+                    if (sname == msg.name) {
                         const ipb = std.mem.asBytes(&msg.dst_ip);
                         const key = try std.fmt.allocPrint(
                             self.allocator, // not arena
@@ -153,12 +154,14 @@ pub fn Group() type {
         members_mtx: std.Thread.Mutex = .{},
         ping_sweep: u1 = 1,
         ping_req_k: u32 = 1,
+        ping_req_sweep: u1 = 1,
         incarnation: u64 = 0,
 
         // Run internal UDP server.
         fn listen(self: *Self) !void {
             log.info("Starting UDP server on :{d}...", .{self.port});
 
+            const name = try std.fmt.parseUnsigned(u128, self.name, 0);
             const buf = try self.allocator.alloc(u8, @sizeOf(Message));
             defer self.allocator.free(buf); // release buffer
 
@@ -176,20 +179,22 @@ pub fn Group() type {
             var src_addrlen: std.posix.socklen_t = @sizeOf(std.os.linux.sockaddr);
 
             while (true) {
-                _ = try std.posix.recvfrom(
+                _ = std.posix.recvfrom(
                     sock,
                     buf,
                     0,
                     &src_addr,
                     &src_addrlen,
-                );
+                ) catch |err| {
+                    log.err("recvfrom failed: {any}", .{err});
+                    std.time.sleep(std.time.ns_per_ms * 500);
+                };
 
                 const msg: *Message = @ptrCast(@alignCast(buf));
 
                 switch (msg.cmd) {
                     .join => {
-                        const hex = try std.fmt.parseUnsigned(u128, self.name, 0);
-                        if (msg.name == hex) {
+                        if (msg.name == name) {
                             const ipb = std.mem.asBytes(&msg.src_ip);
                             const key = try std.fmt.allocPrint(
                                 self.allocator,
@@ -209,6 +214,53 @@ pub fn Group() type {
                             }
 
                             msg.cmd = .ack;
+                            _ = std.posix.sendto(
+                                sock,
+                                std.mem.asBytes(msg),
+                                0,
+                                &src_addr,
+                                src_addrlen,
+                            ) catch |err| log.err("sendto failed: {any}", .{err});
+                        } else {
+                            msg.cmd = .nack;
+                            _ = std.posix.sendto(
+                                sock,
+                                std.mem.asBytes(msg),
+                                0,
+                                &src_addr,
+                                src_addrlen,
+                            ) catch |err| log.err("sendto failed: {any}", .{err});
+                        }
+                    },
+                    .ping => {
+                        msg.cmd = .nack;
+                        if (msg.name == name) msg.cmd = .ack;
+                        _ = std.posix.sendto(
+                            sock,
+                            std.mem.asBytes(msg),
+                            0,
+                            &src_addr,
+                            src_addrlen,
+                        ) catch |err| log.err("sendto failed: {any}", .{err});
+                    },
+                    .indirect_ping => {
+                        if (msg.name == name) {
+                            const ipb = std.mem.asBytes(&msg.dst_ip);
+                            var dst = try std.fmt.allocPrint(
+                                self.allocator,
+                                "{d}.{d}.{d}.{d}:{d}",
+                                .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.dst_port },
+                            );
+
+                            defer self.allocator.free(dst);
+
+                            log.debug("*** try pinging {s}", .{dst});
+
+                            var dummy = false;
+                            const ptr: *[]const u8 = &dst;
+                            const ack = self.ping(ptr, &dummy) catch false;
+                            msg.cmd = .nack;
+                            if (ack) msg.cmd = .ack;
                             _ = try std.posix.sendto(
                                 sock,
                                 std.mem.asBytes(msg),
@@ -218,26 +270,14 @@ pub fn Group() type {
                             );
                         } else {
                             msg.cmd = .nack;
-                            _ = try std.posix.sendto(
+                            _ = std.posix.sendto(
                                 sock,
                                 std.mem.asBytes(msg),
                                 0,
                                 &src_addr,
                                 src_addrlen,
-                            );
+                            ) catch |err| log.err("sendto failed: {any}", .{err});
                         }
-                    },
-                    .ping => {
-                        const hex = try std.fmt.parseUnsigned(u128, self.name, 0);
-                        msg.cmd = .nack;
-                        if (msg.name == hex) msg.cmd = .ack;
-                        _ = try std.posix.sendto(
-                            sock,
-                            std.mem.asBytes(msg),
-                            0,
-                            &src_addr,
-                            src_addrlen,
-                        );
                     },
                     else => {},
                 }
@@ -250,31 +290,89 @@ pub fn Group() type {
             while (true) {
                 var skip_sleep = false;
                 var tm = try std.time.Timer.start();
-                var key: *[]const u8 = undefined;
+                var ping_key: *[]const u8 = undefined;
                 var found = false;
                 self.members_mtx.lock(); // see pair down
                 var iter = self.members.iterator();
                 while (iter.next()) |entry| {
                     if (entry.value_ptr.state != .alive) continue;
                     if (entry.value_ptr.ping_sweep != self.ping_sweep) {
-                        key = entry.key_ptr;
+                        ping_key = entry.key_ptr;
                         found = true;
                         break;
                     }
                 }
 
                 if (found) {
-                    const ptr = self.members.getPtr(key.*).?;
+                    const ptr = self.members.getPtr(ping_key.*).?;
                     ptr.ping_sweep = ~ptr.ping_sweep;
                     self.members_mtx.unlock(); // see pair up
 
-                    log.debug("swim: try pinging {s}", .{key.*});
+                    log.debug("swim: try pinging {s}", .{ping_key.*});
 
-                    var me = false;
-                    const ok = self.ping(key, &me) catch false;
+                    var ping_me = false;
+                    const ok = self.ping(ping_key, &ping_me) catch false;
                     if (!ok) {
-                        for (0..self.ping_req_k) |_| {
-                            log.debug("todo: ping-req", .{});
+                        // Let's ask other members to do indirect ping's for us.
+                        var agents = std.ArrayList(*[]const u8).init(self.allocator);
+                        defer {
+                            if (agents.items.len > 0) {
+                                for (agents.items) |v| {
+                                    self.members_mtx.lock();
+                                    defer self.members_mtx.unlock();
+                                    const pk = self.members.getPtr(v.*).?;
+                                    pk.ping_req_sweep = ~pk.ping_req_sweep;
+                                }
+                            }
+
+                            agents.deinit();
+                        }
+
+                        // [0] = # of items already requested for ping-req
+                        // [1] = members.count() (since we already had the lock)
+                        const nk = b: {
+                            self.members_mtx.lock();
+                            defer self.members_mtx.unlock();
+                            var it = self.members.iterator();
+                            var n: [2]usize = .{ 0, 0 };
+                            while (it.next()) |entry| {
+                                if (try self.keyIsMe(entry.key_ptr)) continue;
+                                if (std.mem.eql(u8, entry.key_ptr.*, ping_key.*)) continue;
+                                if (entry.value_ptr.state != .alive) continue;
+                                if (entry.value_ptr.ping_req_sweep != self.ping_req_sweep) {
+                                    try agents.append(entry.key_ptr);
+                                    if (agents.items.len >= self.ping_req_k) break;
+                                } else n[0] += 1;
+                            }
+
+                            n[1] = self.members.count();
+                            break :b n;
+                        };
+
+                        log.debug("ping-req: agents={d}, nk={d}", .{ agents.items.len, nk });
+
+                        // Reset our sweeper flag for the next round of agent search.
+                        if (nk[0] == (nk[1] - 2)) self.ping_req_sweep = ~self.ping_req_sweep;
+
+                        if (agents.items.len > 0) {
+                            var ts = std.ArrayList(IndirectPing).init(self.allocator);
+                            defer ts.deinit();
+                            for (agents.items) |v| {
+                                var td = IndirectPing{ .self = self, .src = v, .dst = ping_key };
+                                td.thread = try std.Thread.spawn(
+                                    .{},
+                                    Self.indirectPing,
+                                    .{&td},
+                                );
+
+                                try ts.append(td);
+                            }
+
+                            for (ts.items) |td| td.thread.join(); // wait for all agents
+
+                            for (ts.items) |v| {
+                                log.debug("ack? {any}", .{v.ack});
+                            }
                         }
                     } else {
                         const count = b: {
@@ -283,12 +381,12 @@ pub fn Group() type {
                             break :b self.members.count();
                         };
 
-                        if (me and count > 1) {
+                        if (ping_me and count > 1) {
                             skip_sleep = true;
                         } else {
                             log.debug("ack from {s}, me={any}, took {any}", .{
-                                key.*,
-                                me,
+                                ping_key.*,
+                                ping_me,
                                 std.fmt.fmtDuration(gtm.lap()),
                             });
                         }
@@ -308,6 +406,7 @@ pub fn Group() type {
             }
         }
 
+        // Expected format for `key` is ip:port, i.e. 0.0.0.0:8080.
         fn ping(self: *Self, key: *[]const u8, me: *bool) !bool {
             var arena = std.heap.ArenaAllocator.init(self.allocator);
             defer arena.deinit(); // destroy arena in one go
@@ -335,46 +434,44 @@ pub fn Group() type {
             return ret;
         }
 
-        fn pingIndirect(self: *Self, key: *[]const u8) !bool {
-            var arena = std.heap.ArenaAllocator.init(self.allocator);
+        const IndirectPing = struct {
+            thread: std.Thread = undefined,
+            self: *Self,
+            src: *[]const u8 = undefined, // agent
+            dst: *[]const u8 = undefined, // target
+            ack: bool = false,
+        };
+
+        fn indirectPing(args: *IndirectPing) !void {
+            log.debug("==> thread: try pinging {s} via {s}", .{ args.dst.*, args.src.* });
+            var arena = std.heap.ArenaAllocator.init(args.self.allocator);
             defer arena.deinit(); // destroy arena in one go
 
-            const split = std.mem.indexOf(u8, key.*, ":").?;
-            const ip = key.*[0..split];
-            const port = try std.fmt.parseUnsigned(u16, key.*[split + 1 ..], 10);
-            if (std.mem.eql(u8, ip, self.ip) and port == self.port) return true;
-
-            // Start direct ping.
-            log.debug("ping: {s}:{d}", .{ ip, port });
+            var split = std.mem.indexOf(u8, args.src.*, ":").?;
+            const ip = args.src.*[0..split];
+            const port = try std.fmt.parseUnsigned(u16, args.src.*[split + 1 ..], 10);
 
             const buf = try arena.allocator().alloc(u8, @sizeOf(Message));
             const msg: *Message = @ptrCast(@alignCast(buf));
-            msg.cmd = .ping;
-            msg.name = try std.fmt.parseUnsigned(u128, self.name, 0);
-            const addr = try std.net.Address.resolveIp(ip, port);
-            const sock = try std.posix.socket(
-                std.posix.AF.INET,
-                std.posix.SOCK.DGRAM | std.posix.SOCK.CLOEXEC,
-                0,
-            );
+            msg.cmd = .indirect_ping;
 
-            defer std.posix.close(sock);
-            try setReadTimeout(sock, 5_000_000);
-            try setWriteTimeout(sock, 5_000_000);
-            try std.posix.connect(sock, &addr.any, addr.getOsSockLen());
-            _ = try std.posix.write(sock, std.mem.asBytes(msg));
-            _ = try std.posix.recv(sock, buf, 0);
+            split = std.mem.indexOf(u8, args.dst.*, ":").?;
+            const dst_ip = args.dst.*[0..split];
+            const dst_port = try std.fmt.parseUnsigned(u16, args.dst.*[split + 1 ..], 10);
+            const dst_addr = try std.net.Address.resolveIp(dst_ip, dst_port);
+            msg.dst_ip = dst_addr.in.sa.addr;
+            msg.dst_port = dst_port;
+
+            try args.self.send(ip, port, buf);
 
             switch (msg.cmd) {
                 .ack => {
-                    log.debug("ack from {s}:{d}", .{ ip, port });
+                    log.debug("==> thread: got ack from {s}", .{args.src.*});
+                    const ptr = &args.ack;
+                    ptr.* = true;
                 },
-                else => {
-                    log.err("todo: ping-req", .{});
-                },
+                else => {},
             }
-
-            return true;
         }
 
         // Helper function for internal one-shot send/recv. `ptr` here is
@@ -396,6 +493,15 @@ pub fn Group() type {
             try std.posix.connect(sock, &addr.any, addr.getOsSockLen());
             _ = try std.posix.write(sock, std.mem.asBytes(msg));
             _ = try std.posix.recv(sock, ptr, 0);
+        }
+
+        // Expected format for `key` is ip:port, i.e. 0.0.0.0:8080.
+        fn keyIsMe(self: *Self, key: *[]const u8) !bool {
+            const split = std.mem.indexOf(u8, key.*, ":").?;
+            const ip = key.*[0..split];
+            const port = try std.fmt.parseUnsigned(u16, key.*[split + 1 ..], 10);
+            if (std.mem.eql(u8, ip, self.ip) and port == self.port) return true;
+            return false;
         }
     };
 }

@@ -72,7 +72,7 @@ pub fn main() !void {
     i = 0; // reuse
     while (true) : (i += 1) {
         std.time.sleep(std.time.ns_per_s * 1);
-        if (i == 3 and join_ip.len > 0) {
+        if (i == 2 and join_ip.len > 0) {
             _ = try grp.join(
                 hm.getEntry(1).?.value_ptr.args,
                 config.ip,
