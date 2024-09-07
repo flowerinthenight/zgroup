@@ -161,44 +161,6 @@ pub fn Group() type {
         ping_sweep: u1 = 1,
         incarnation: u64 = 0,
 
-        // Thread running the SWIM protocol.
-        fn tick(self: *Self) !void {
-            var i: usize = 0;
-            while (true) : (i += 1) {
-                var skip = false;
-                var tm = try std.time.Timer.start();
-                self.members_mtx.lock();
-                var key: *[]const u8 = undefined;
-                var found = false;
-                var iter = self.members.iterator();
-                while (iter.next()) |entry| {
-                    if (entry.value_ptr.sweep != self.ping_sweep) {
-                        key = entry.key_ptr;
-                        found = true;
-                        break;
-                    }
-                }
-
-                if (found) {
-                    const ptr = self.members.getPtr(key.*).?;
-                    ptr.sweep = ~ptr.sweep;
-                    self.members_mtx.unlock();
-                    _ = self.ping(key) catch {};
-                } else {
-                    self.ping_sweep = ~self.ping_sweep;
-                    self.members_mtx.unlock();
-                    skip = true;
-                }
-
-                const elapsed = tm.read();
-                if (elapsed < self.protocol_time and !skip) {
-                    const left = self.protocol_time - elapsed;
-                    log.debug("tick: left={any}", .{std.fmt.fmtDuration(left)});
-                    std.time.sleep(left);
-                }
-            }
-        }
-
         // Run internal UDP server.
         fn listen(self: *Self) !void {
             log.info("Starting UDP server on :{d}...", .{self.port});
@@ -269,6 +231,44 @@ pub fn Group() type {
                         &src_addr,
                         src_addrlen,
                     );
+                }
+            }
+        }
+
+        // Thread running the SWIM protocol.
+        fn tick(self: *Self) !void {
+            var i: usize = 0;
+            while (true) : (i += 1) {
+                var skip = false;
+                var tm = try std.time.Timer.start();
+                self.members_mtx.lock();
+                var key: *[]const u8 = undefined;
+                var found = false;
+                var iter = self.members.iterator();
+                while (iter.next()) |entry| {
+                    if (entry.value_ptr.sweep != self.ping_sweep) {
+                        key = entry.key_ptr;
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (found) {
+                    const ptr = self.members.getPtr(key.*).?;
+                    ptr.sweep = ~ptr.sweep;
+                    self.members_mtx.unlock();
+                    _ = self.ping(key) catch {};
+                } else {
+                    self.ping_sweep = ~self.ping_sweep;
+                    self.members_mtx.unlock();
+                    skip = true;
+                }
+
+                const elapsed = tm.read();
+                if (elapsed < self.protocol_time and !skip) {
+                    const left = self.protocol_time - elapsed;
+                    log.debug("tick: left={any}", .{std.fmt.fmtDuration(left)});
+                    std.time.sleep(left);
                 }
             }
         }
