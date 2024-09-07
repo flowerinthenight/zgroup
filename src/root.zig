@@ -188,6 +188,7 @@ pub fn Group() type {
                 ) catch |err| {
                     log.err("recvfrom failed: {any}", .{err});
                     std.time.sleep(std.time.ns_per_ms * 500);
+                    continue;
                 };
 
                 const msg: *Message = @ptrCast(@alignCast(buf));
