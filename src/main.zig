@@ -38,40 +38,31 @@ pub fn main() !void {
     // Expected:
     // [0] = bin
     // [1] = name
-    // [2] = member addr:port
-    // [3] = join addr:port
-
-    var iter = hm.iterator();
-    while (iter.next()) |entry| {
-        log.info("{any}, {s}", .{ entry.key_ptr.*, entry.value_ptr.args });
-    }
+    // [2] = member ip:port
+    // [3] = join ip:port
 
     if (hm.count() < 4) {
         log.err("invalid args", .{});
         return;
     }
 
+    var iter = hm.iterator();
+    while (iter.next()) |entry| {
+        log.info("{any}, {s}", .{ entry.key_ptr.*, entry.value_ptr.args });
+    }
+
     var config = root.Group().Config{ .name = hm.getEntry(1).?.value_ptr.args };
-    var it = std.mem.split(u8, hm.getEntry(2).?.value_ptr.args, ":");
-    if (it.next()) |val| {
-        config.ip = try std.fmt.allocPrint(arena.allocator(), "{s}", .{val});
-    }
+    const member = hm.getEntry(2).?.value_ptr.args;
+    var split = std.mem.indexOf(u8, member, ":").?;
+    config.ip = member[0..split];
+    config.port = try std.fmt.parseUnsigned(u16, member[split + 1 ..], 10);
 
-    if (it.next()) |val| {
-        config.port = try std.fmt.parseUnsigned(u16, val, 10);
-    }
-
-    var dst_ip: []u8 = undefined;
-    it = std.mem.split(u8, hm.getEntry(3).?.value_ptr.args, ":");
-    if (it.next()) |val| {
-        dst_ip = try std.fmt.allocPrint(arena.allocator(), "{s}", .{val});
-    }
-
-    var dst_port: u16 = 0;
-    if (it.next()) |val| {
-        if (val.len > 0) {
-            dst_port = try std.fmt.parseUnsigned(u16, val, 10);
-        }
+    const join = hm.getEntry(3).?.value_ptr.args;
+    split = std.mem.indexOf(u8, join, ":").?;
+    const join_ip = join[0..split];
+    var join_port: u16 = 0;
+    if (join[split + 1 ..].len > 0) {
+        join_port = try std.fmt.parseUnsigned(u16, join[split + 1 ..], 10);
     }
 
     var grp = try root.Group().init(gpa.allocator(), &config);
@@ -81,13 +72,13 @@ pub fn main() !void {
     i = 0; // reuse
     while (true) : (i += 1) {
         std.time.sleep(std.time.ns_per_s * 1);
-        if (i == 10 and dst_ip.len > 0) {
+        if (i == 3 and join_ip.len > 0) {
             _ = try grp.join(
                 hm.getEntry(1).?.value_ptr.args,
                 config.ip,
                 config.port,
-                dst_ip,
-                dst_port,
+                join_ip,
+                join_port,
             );
         }
     }

@@ -149,10 +149,10 @@ pub fn Group() type {
         ip: []u8 = undefined,
         port: u16 = 8080,
         protocol_time: u64 = std.time.ns_per_s * 2,
-        ping_req_k: u32 = 1,
         members: std.StringHashMap(MemberData) = undefined,
         members_mtx: std.Thread.Mutex = .{},
         ping_sweep: u1 = 1,
+        ping_req_k: u32 = 1,
         incarnation: u64 = 0,
 
         // Run internal UDP server.
@@ -268,12 +268,14 @@ pub fn Group() type {
                     ptr.ping_sweep = ~ptr.ping_sweep;
                     self.members_mtx.unlock(); // see pair up
 
-                    log.debug("ping: {s}", .{key.*});
+                    log.debug("swim: try pinging {s}", .{key.*});
 
                     var me = false;
                     const ok = self.ping(key, &me) catch false;
                     if (!ok) {
-                        log.debug("todo: ping-req", .{});
+                        for (0..self.ping_req_k) |_| {
+                            log.debug("todo: ping-req", .{});
+                        }
                     } else {
                         const count = b: {
                             self.members_mtx.lock();
