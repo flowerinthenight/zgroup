@@ -158,7 +158,7 @@ pub fn Group() type {
         ping_req_k: u32 = 1,
         members: std.StringHashMap(MemberData) = undefined,
         members_mtx: std.Thread.Mutex = .{},
-        sweep: u1 = 1,
+        ping_sweep: u1 = 1,
         incarnation: u64 = 0,
 
         // Thread running the SWIM protocol.
@@ -172,7 +172,7 @@ pub fn Group() type {
                 var found = false;
                 var iter = self.members.iterator();
                 while (iter.next()) |entry| {
-                    if (entry.value_ptr.sweep != self.sweep) {
+                    if (entry.value_ptr.sweep != self.ping_sweep) {
                         key = entry.key_ptr;
                         found = true;
                         break;
@@ -185,7 +185,7 @@ pub fn Group() type {
                     self.members_mtx.unlock();
                     _ = self.ping(key) catch {};
                 } else {
-                    self.sweep = ~self.sweep;
+                    self.ping_sweep = ~self.ping_sweep;
                     self.members_mtx.unlock();
                     skip = true;
                 }
