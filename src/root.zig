@@ -21,7 +21,7 @@ pub fn Group() type {
 
         pub const Command = enum(u8) {
             exit,
-            dummy,
+            nack,
             join,
             ping,
             ping_req,
@@ -39,7 +39,7 @@ pub fn Group() type {
 
         pub const MemberData = struct {
             state: MemberState = .alive,
-            sweep: u1 = 0,
+            ping_sweep: u1 = 0,
         };
 
         pub const Config = struct {
@@ -72,7 +72,7 @@ pub fn Group() type {
                 .{ self.ip, self.port },
             );
 
-            try self.members.put(key, .{ .state = .alive });
+            try self.members.put(key, .{});
             const server = try std.Thread.spawn(.{}, Self.listen, .{self});
             server.detach();
             const ticker = try std.Thread.spawn(.{}, Self.tick, .{self});
@@ -133,7 +133,7 @@ pub fn Group() type {
                         log.debug("join: key={s}", .{key});
 
                         self.members_mtx.lock();
-                        self.members.put(key, .{ .state = .alive }) catch {};
+                        self.members.put(key, .{}) catch {};
                         self.members_mtx.unlock();
                         ret = true;
                     }
@@ -184,10 +184,6 @@ pub fn Group() type {
                     &src_addrlen,
                 );
 
-                var tm = try std.time.Timer.start();
-                defer log.debug("msg took {any}", .{std.fmt.fmtDuration(tm.read())});
-
-                var ack = true;
                 const msg: *Message = @ptrCast(@alignCast(buf));
 
                 switch (msg.cmd) {
@@ -202,42 +198,65 @@ pub fn Group() type {
                             );
 
                             self.members_mtx.lock();
-                            self.members.put(key, .{ .state = .alive }) catch {};
-                            self.members_mtx.unlock();
-                        } else ack = false;
+                            const exists = self.members.contains(key);
+                            if (!exists) {
+                                self.members.put(key, .{ .state = .alive }) catch {};
+                                self.members_mtx.unlock();
+                            } else {
+                                const ptr = self.members.getPtr(key).?;
+                                ptr.state = .alive;
+                                self.members_mtx.unlock();
+                            }
+
+                            msg.cmd = .ack;
+                            _ = try std.posix.sendto(
+                                sock,
+                                std.mem.asBytes(msg),
+                                0,
+                                &src_addr,
+                                src_addrlen,
+                            );
+                        } else {
+                            msg.cmd = .nack;
+                            _ = try std.posix.sendto(
+                                sock,
+                                std.mem.asBytes(msg),
+                                0,
+                                &src_addr,
+                                src_addrlen,
+                            );
+                        }
                     },
                     .ping => {
                         const hex = try std.fmt.parseUnsigned(u128, self.name, 0);
-                        if (msg.name != hex) ack = false;
+                        msg.cmd = .nack;
+                        if (msg.name == hex) msg.cmd = .ack;
+                        _ = try std.posix.sendto(
+                            sock,
+                            std.mem.asBytes(msg),
+                            0,
+                            &src_addr,
+                            src_addrlen,
+                        );
                     },
-                    else => ack = false,
-                }
-
-                if (ack) {
-                    msg.cmd = .ack;
-                    _ = try std.posix.sendto(
-                        sock,
-                        std.mem.asBytes(msg),
-                        0,
-                        &src_addr,
-                        src_addrlen,
-                    );
+                    else => {},
                 }
             }
         }
 
         // Thread running the SWIM protocol.
         fn tick(self: *Self) !void {
+            var gtm = try std.time.Timer.start();
             while (true) {
-                var skip = false;
+                var skip_sleep = false;
                 var tm = try std.time.Timer.start();
                 var key: *[]const u8 = undefined;
                 var found = false;
-                self.members_mtx.lock();
+                self.members_mtx.lock(); // see pair down
                 var iter = self.members.iterator();
                 while (iter.next()) |entry| {
                     if (entry.value_ptr.state != .alive) continue;
-                    if (entry.value_ptr.sweep != self.ping_sweep) {
+                    if (entry.value_ptr.ping_sweep != self.ping_sweep) {
                         key = entry.key_ptr;
                         found = true;
                         break;
@@ -246,38 +265,58 @@ pub fn Group() type {
 
                 if (found) {
                     const ptr = self.members.getPtr(key.*).?;
-                    ptr.sweep = ~ptr.sweep;
-                    self.members_mtx.unlock();
-                    const ok = self.ping(key) catch false;
+                    ptr.ping_sweep = ~ptr.ping_sweep;
+                    self.members_mtx.unlock(); // see pair up
+
+                    log.debug("ping: {s}", .{key.*});
+
+                    var me = false;
+                    const ok = self.ping(key, &me) catch false;
                     if (!ok) {
                         log.debug("todo: ping-req", .{});
+                    } else {
+                        const count = b: {
+                            self.members_mtx.lock();
+                            defer self.members_mtx.unlock();
+                            break :b self.members.count();
+                        };
+
+                        if (me and count > 1) {
+                            skip_sleep = true;
+                        } else {
+                            log.debug("ack from {s}, me={any}, took {any}", .{
+                                key.*,
+                                me,
+                                std.fmt.fmtDuration(gtm.lap()),
+                            });
+                        }
                     }
                 } else {
                     self.ping_sweep = ~self.ping_sweep;
-                    self.members_mtx.unlock();
-                    skip = true;
+                    self.members_mtx.unlock(); // see pair up
+                    skip_sleep = true;
                 }
 
                 const elapsed = tm.read();
-                if (elapsed < self.protocol_time and !skip) {
+                if (elapsed < self.protocol_time and !skip_sleep) {
                     const left = self.protocol_time - elapsed;
-                    log.debug("tick: left={any}", .{std.fmt.fmtDuration(left)});
+                    log.debug("tick: sleep for {any} <-----", .{std.fmt.fmtDuration(left)});
                     std.time.sleep(left);
                 }
             }
         }
 
-        fn ping(self: *Self, key: *[]const u8) !bool {
+        fn ping(self: *Self, key: *[]const u8, me: *bool) !bool {
             var arena = std.heap.ArenaAllocator.init(self.allocator);
             defer arena.deinit(); // destroy arena in one go
 
             const split = std.mem.indexOf(u8, key.*, ":").?;
             const ip = key.*[0..split];
             const port = try std.fmt.parseUnsigned(u16, key.*[split + 1 ..], 10);
-            if (std.mem.eql(u8, ip, self.ip) and port == self.port) return true;
-
-            // Start direct ping.
-            log.debug("ping: {s}:{d}", .{ ip, port });
+            if (std.mem.eql(u8, ip, self.ip) and port == self.port) {
+                me.* = true;
+                return true;
+            }
 
             const buf = try arena.allocator().alloc(u8, @sizeOf(Message));
             const msg: *Message = @ptrCast(@alignCast(buf));
@@ -287,10 +326,7 @@ pub fn Group() type {
 
             var ret = false;
             switch (msg.cmd) {
-                .ack => {
-                    log.debug("ack from {s}:{d}", .{ ip, port });
-                    ret = true;
-                },
+                .ack => ret = true,
                 else => {},
             }
 
@@ -340,8 +376,8 @@ pub fn Group() type {
         }
 
         // Helper function for internal one-shot send/recv. `ptr` here is
-        // expected to be a pointer of *Member type. The same message ptr
-        // is used for both request and response payloads.
+        // expected to be *Member. The same message ptr is used for both
+        // request and response payloads.
         fn send(self: *Self, ip: []const u8, port: u16, ptr: []u8) !void {
             const msg: *Message = @ptrCast(@alignCast(ptr));
             msg.name = try std.fmt.parseUnsigned(u128, self.name, 0);

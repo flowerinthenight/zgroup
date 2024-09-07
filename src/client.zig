@@ -14,7 +14,7 @@ pub fn main() !void {
 
     const ptr: *Group.Message = @ptrCast(@alignCast(buf));
     const hex = "0xf47ac10b58cc4372a5670e02b2c3d479";
-    ptr.cmd = Group.Command.dummy; // default
+    ptr.cmd = Group.Command.ack; // default
     ptr.name = try std.fmt.parseUnsigned(u128, hex, 0);
 
     const port = 8080;

@@ -178,3 +178,12 @@ test "split" {
 
     dbg("port={d}\n", .{np});
 }
+
+test "block" {
+    const x = blk: {
+        dbg("define\n", .{});
+        defer dbg("end define\n", .{});
+        break :blk 2;
+    };
+    dbg("x={d}\n", .{x});
+}
