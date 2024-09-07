@@ -8,6 +8,17 @@ pub fn Group() type {
     return struct {
         const Self = @This();
 
+        // Our generic UDP comms/protocol payload.
+        pub const Message = packed struct {
+            cmd: Command = .dummy,
+            name: u128 = 0,
+            src_ip: u32 = 0,
+            src_port: u16 = 0,
+            dst_ip: u32 = 0,
+            dst_port: u16 = 0,
+            incarnation: u64 = 0,
+        };
+
         pub const Command = enum(u8) {
             exit,
             dummy,
@@ -18,16 +29,6 @@ pub fn Group() type {
             suspect,
             alive,
             confirm_faulty,
-        };
-
-        pub const Message = packed struct {
-            cmd: Command = .dummy,
-            name: u128 = 0,
-            src_ip: u32 = 0,
-            src_port: u16 = 0,
-            dst_ip: u32 = 0,
-            dst_port: u16 = 0,
-            incarnation: u64 = 0,
         };
 
         pub const MemberState = enum(u8) {
@@ -99,40 +100,32 @@ pub fn Group() type {
             src_port: u16,
             dst_ip: []const u8,
             dst_port: u16,
-        ) !void {
+        ) !bool {
             log.info("joining via {s}:{any}, name={s}...", .{ dst_ip, dst_port, name });
 
-            const buf = try self.allocator.alloc(u8, @sizeOf(Message));
-            defer self.allocator.free(buf); // release buffer
+            var arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer arena.deinit(); // destroy arena in one go
+
+            const buf = try arena.allocator().alloc(u8, @sizeOf(Message));
             const msg: *Message = @ptrCast(@alignCast(buf));
             msg.cmd = .join;
-            msg.name = try std.fmt.parseUnsigned(u128, name, 0);
             const src_addr = try std.net.Address.resolveIp(src_ip, src_port);
             const dst_addr = try std.net.Address.resolveIp(dst_ip, dst_port);
             msg.src_ip = src_addr.in.sa.addr;
             msg.src_port = src_port;
             msg.dst_ip = dst_addr.in.sa.addr;
             msg.dst_port = dst_port;
-            const sock = try std.posix.socket(
-                std.posix.AF.INET,
-                std.posix.SOCK.DGRAM | std.posix.SOCK.CLOEXEC,
-                0,
-            );
 
-            defer std.posix.close(sock);
-            try setReadTimeout(sock, 5_000_000);
-            try setWriteTimeout(sock, 5_000_000);
-            try std.posix.connect(sock, &dst_addr.any, dst_addr.getOsSockLen());
-            _ = try std.posix.write(sock, std.mem.asBytes(msg));
-            _ = try std.posix.recv(sock, buf, 0);
+            try self.send(dst_ip, dst_port, buf);
 
+            var ret = false;
             switch (msg.cmd) {
                 .ack => {
                     const hex = try std.fmt.parseUnsigned(u128, self.name, 0);
                     if (hex == msg.name) {
                         const ipb = std.mem.asBytes(&msg.dst_ip);
                         const key = try std.fmt.allocPrint(
-                            self.allocator,
+                            self.allocator, // not arena
                             "{d}.{d}.{d}.{d}:{d}",
                             .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.dst_port },
                         );
@@ -142,12 +135,13 @@ pub fn Group() type {
                         self.members_mtx.lock();
                         self.members.put(key, .{ .state = .alive }) catch {};
                         self.members_mtx.unlock();
+                        ret = true;
                     }
                 },
-                else => {
-                    log.err("unsupported command: {any}", .{msg.cmd});
-                },
+                else => {},
             }
+
+            return ret;
         }
 
         allocator: std.mem.Allocator,
@@ -164,10 +158,10 @@ pub fn Group() type {
         // Run internal UDP server.
         fn listen(self: *Self) !void {
             log.info("Starting UDP server on :{d}...", .{self.port});
-            defer log.debug("listen done", .{});
 
             const buf = try self.allocator.alloc(u8, @sizeOf(Message));
             defer self.allocator.free(buf); // release buffer
+
             const addr = try std.net.Address.resolveIp(self.ip, self.port);
             const sock = try std.posix.socket(
                 std.posix.AF.INET,
@@ -191,7 +185,7 @@ pub fn Group() type {
                 );
 
                 var tm = try std.time.Timer.start();
-                defer log.debug("process took {any}", .{std.fmt.fmtDuration(tm.read())});
+                defer log.debug("msg took {any}", .{std.fmt.fmtDuration(tm.read())});
 
                 var ack = true;
                 const msg: *Message = @ptrCast(@alignCast(buf));
@@ -216,10 +210,7 @@ pub fn Group() type {
                         const hex = try std.fmt.parseUnsigned(u128, self.name, 0);
                         if (msg.name != hex) ack = false;
                     },
-                    else => {
-                        log.err("unsupported command: {any}", .{msg.cmd});
-                        ack = false;
-                    },
+                    else => ack = false,
                 }
 
                 if (ack) {
@@ -237,15 +228,15 @@ pub fn Group() type {
 
         // Thread running the SWIM protocol.
         fn tick(self: *Self) !void {
-            var i: usize = 0;
-            while (true) : (i += 1) {
+            while (true) {
                 var skip = false;
                 var tm = try std.time.Timer.start();
-                self.members_mtx.lock();
                 var key: *[]const u8 = undefined;
                 var found = false;
+                self.members_mtx.lock();
                 var iter = self.members.iterator();
                 while (iter.next()) |entry| {
+                    if (entry.value_ptr.state != .alive) continue;
                     if (entry.value_ptr.sweep != self.ping_sweep) {
                         key = entry.key_ptr;
                         found = true;
@@ -257,7 +248,10 @@ pub fn Group() type {
                     const ptr = self.members.getPtr(key.*).?;
                     ptr.sweep = ~ptr.sweep;
                     self.members_mtx.unlock();
-                    _ = self.ping(key) catch {};
+                    const ok = self.ping(key) catch false;
+                    if (!ok) {
+                        log.debug("todo: ping-req", .{});
+                    }
                 } else {
                     self.ping_sweep = ~self.ping_sweep;
                     self.members_mtx.unlock();
@@ -274,30 +268,48 @@ pub fn Group() type {
         }
 
         fn ping(self: *Self, key: *[]const u8) !bool {
-            var ip: []u8 = undefined;
-            defer {
-                if (ip.len > 0) self.allocator.free(ip);
-            }
+            var arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer arena.deinit(); // destroy arena in one go
 
-            var port: u16 = 0;
-            var it = std.mem.split(u8, key.*, ":");
-            if (it.next()) |val| {
-                ip = try std.fmt.allocPrint(self.allocator, "{s}", .{val});
-            }
-
-            if (it.next()) |val| {
-                port = try std.fmt.parseUnsigned(u16, val, 10);
-            }
-
-            if (std.mem.eql(u8, ip, self.ip) and port == self.port) {
-                return false;
-            }
+            const split = std.mem.indexOf(u8, key.*, ":").?;
+            const ip = key.*[0..split];
+            const port = try std.fmt.parseUnsigned(u16, key.*[split + 1 ..], 10);
+            if (std.mem.eql(u8, ip, self.ip) and port == self.port) return true;
 
             // Start direct ping.
             log.debug("ping: {s}:{d}", .{ ip, port });
 
-            const buf = try self.allocator.alloc(u8, @sizeOf(Message));
-            defer self.allocator.free(buf); // release buffer
+            const buf = try arena.allocator().alloc(u8, @sizeOf(Message));
+            const msg: *Message = @ptrCast(@alignCast(buf));
+            msg.cmd = .ping;
+
+            try self.send(ip, port, buf);
+
+            var ret = false;
+            switch (msg.cmd) {
+                .ack => {
+                    log.debug("ack from {s}:{d}", .{ ip, port });
+                    ret = true;
+                },
+                else => {},
+            }
+
+            return ret;
+        }
+
+        fn pingIndirect(self: *Self, key: *[]const u8) !bool {
+            var arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer arena.deinit(); // destroy arena in one go
+
+            const split = std.mem.indexOf(u8, key.*, ":").?;
+            const ip = key.*[0..split];
+            const port = try std.fmt.parseUnsigned(u16, key.*[split + 1 ..], 10);
+            if (std.mem.eql(u8, ip, self.ip) and port == self.port) return true;
+
+            // Start direct ping.
+            log.debug("ping: {s}:{d}", .{ ip, port });
+
+            const buf = try arena.allocator().alloc(u8, @sizeOf(Message));
             const msg: *Message = @ptrCast(@alignCast(buf));
             msg.cmd = .ping;
             msg.name = try std.fmt.parseUnsigned(u128, self.name, 0);
@@ -313,11 +325,11 @@ pub fn Group() type {
             try setWriteTimeout(sock, 5_000_000);
             try std.posix.connect(sock, &addr.any, addr.getOsSockLen());
             _ = try std.posix.write(sock, std.mem.asBytes(msg));
-            const len = try std.posix.recv(sock, buf, 0);
+            _ = try std.posix.recv(sock, buf, 0);
 
             switch (msg.cmd) {
                 .ack => {
-                    log.debug("{d}: ack from {s}:{d}", .{ len, ip, port });
+                    log.debug("ack from {s}:{d}", .{ ip, port });
                 },
                 else => {
                     log.err("todo: ping-req", .{});
@@ -325,6 +337,27 @@ pub fn Group() type {
             }
 
             return true;
+        }
+
+        // Helper function for internal one-shot send/recv. `ptr` here is
+        // expected to be a pointer of *Member type. The same message ptr
+        // is used for both request and response payloads.
+        fn send(self: *Self, ip: []const u8, port: u16, ptr: []u8) !void {
+            const msg: *Message = @ptrCast(@alignCast(ptr));
+            msg.name = try std.fmt.parseUnsigned(u128, self.name, 0);
+            const addr = try std.net.Address.resolveIp(ip, port);
+            const sock = try std.posix.socket(
+                std.posix.AF.INET,
+                std.posix.SOCK.DGRAM | std.posix.SOCK.CLOEXEC,
+                0,
+            );
+
+            defer std.posix.close(sock);
+            try setReadTimeout(sock, 5_000_000);
+            try setWriteTimeout(sock, 5_000_000);
+            try std.posix.connect(sock, &addr.any, addr.getOsSockLen());
+            _ = try std.posix.write(sock, std.mem.asBytes(msg));
+            _ = try std.posix.recv(sock, ptr, 0);
         }
     };
 }

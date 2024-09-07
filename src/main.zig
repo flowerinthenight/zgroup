@@ -82,7 +82,7 @@ pub fn main() !void {
     while (true) : (i += 1) {
         std.time.sleep(std.time.ns_per_s * 1);
         if (i == 10 and dst_ip.len > 0) {
-            try grp.join(
+            _ = try grp.join(
                 hm.getEntry(1).?.value_ptr.args,
                 config.ip,
                 config.port,
@@ -153,4 +153,28 @@ test "ip1" {
     const ab = std.mem.asBytes(&addr.in.sa.addr);
     dbg("0x{X}, {d}, {any}\n", .{ addr.in.sa.addr, addr.in.sa.addr, ab });
     dbg("{d}.{d}.{d}.{d}\n", .{ ab[0], ab[1], ab[2], ab[3] });
+}
+
+fn getPort(str: []u8, port: *u16) void {
+    var it = std.mem.split(u8, str, ":");
+    _ = it.next(); // skip ip
+    if (it.next()) |v| {
+        port.* = std.fmt.parseUnsigned(u16, v, 10) catch 0;
+    }
+}
+
+test "split" {
+    var port: u16 = 0;
+    const str = try std.fmt.allocPrint(std.testing.allocator, "{s}", .{"0.0.0.0:8081"});
+    defer std.testing.allocator.free(str);
+    getPort(str, &port);
+    dbg("port={d}\n", .{port});
+
+    const i = std.mem.indexOf(u8, str, ":").?;
+    dbg("index={d}\n", .{i});
+    dbg("ip={s}\n", .{str[0..i]});
+
+    const np = try std.fmt.parseUnsigned(u16, str[i + 1 ..], 10);
+
+    dbg("port={d}\n", .{np});
 }
