@@ -84,25 +84,6 @@ pub fn main() !void {
     }
 }
 
-test "autohashmap" {
-    const Value = struct {
-        id: u32 = 0,
-    };
-
-    var hm = std.AutoHashMap(usize, Value).init(std.testing.allocator);
-    defer hm.deinit();
-    try hm.put(hm.count(), .{ .id = 100 });
-    try hm.put(hm.count(), .{ .id = 101 });
-
-    const ptr = hm.getPtr(1).?;
-    ptr.* = .{ .id = 201 };
-
-    var iter = hm.iterator();
-    while (iter.next()) |entry| {
-        dbg("{any}, {d}\n", .{ entry.key_ptr.*, entry.value_ptr.id });
-    }
-}
-
 test "backoff" {
     const bo = backoff.Backoff{};
     dbg("val={any}\n", .{bo.initial});
@@ -137,44 +118,4 @@ test "atomic" {
     _ = @atomicLoad(u64, &v, AtomicOrder.seq_cst);
     // print("add={d}\n", .{b});
     dbg("took {any}\n", .{std.fmt.fmtDuration(tm.read())});
-}
-
-test "ip1" {
-    const addr = try std.net.Address.resolveIp("127.0.0.1", 8080);
-    const ab = std.mem.asBytes(&addr.in.sa.addr);
-    dbg("0x{X}, {d}, {any}\n", .{ addr.in.sa.addr, addr.in.sa.addr, ab });
-    dbg("{d}.{d}.{d}.{d}\n", .{ ab[0], ab[1], ab[2], ab[3] });
-}
-
-fn getPort(str: []u8, port: *u16) void {
-    var it = std.mem.split(u8, str, ":");
-    _ = it.next(); // skip ip
-    if (it.next()) |v| {
-        port.* = std.fmt.parseUnsigned(u16, v, 10) catch 0;
-    }
-}
-
-test "split" {
-    var port: u16 = 0;
-    const str = try std.fmt.allocPrint(std.testing.allocator, "{s}", .{"0.0.0.0:8081"});
-    defer std.testing.allocator.free(str);
-    getPort(str, &port);
-    dbg("port={d}\n", .{port});
-
-    const i = std.mem.indexOf(u8, str, ":").?;
-    dbg("index={d}\n", .{i});
-    dbg("ip={s}\n", .{str[0..i]});
-
-    const np = try std.fmt.parseUnsigned(u16, str[i + 1 ..], 10);
-
-    dbg("port={d}\n", .{np});
-}
-
-test "block" {
-    const x = blk: {
-        dbg("define\n", .{});
-        defer dbg("end define\n", .{});
-        break :blk 2;
-    };
-    dbg("x={d}\n", .{x});
 }
