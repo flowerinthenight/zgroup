@@ -73,12 +73,14 @@ pub fn main() !void {
     while (true) : (i += 1) {
         std.time.sleep(std.time.ns_per_s * 1);
         if (i == 2 and join_ip.len > 0) {
-            _ = try grp.join(
+            var joined = false;
+            try grp.join(
                 hm.getEntry(1).?.value_ptr.args,
                 config.ip,
                 config.port,
                 join_ip,
                 join_port,
+                &joined,
             );
         }
     }

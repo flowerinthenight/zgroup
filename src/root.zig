@@ -109,7 +109,8 @@ pub fn Group() type {
             self.members.deinit();
         }
 
-        /// Ask an instance to join an existing group.
+        /// Ask an instance to join an existing group. `joined` will be set to true if
+        /// joining is successful. `src_*` is the caller, joining through `dst_*`.
         pub fn join(
             self: *Self,
             name: []const u8,
@@ -117,7 +118,8 @@ pub fn Group() type {
             src_port: u16,
             dst_ip: []const u8,
             dst_port: u16,
-        ) !bool {
+            joined: *bool,
+        ) !void {
             log.info("joining via {s}:{any}, name={s}...", .{ dst_ip, dst_port, name });
 
             var arena = std.heap.ArenaAllocator.init(self.allocator);
@@ -135,7 +137,6 @@ pub fn Group() type {
 
             try self.send(dst_ip, dst_port, buf);
 
-            var ret = false;
             switch (msg.cmd) {
                 .ack => {
                     const sname = try std.fmt.parseUnsigned(u128, self.name, 0);
@@ -152,13 +153,11 @@ pub fn Group() type {
                         self.members_mtx.lock();
                         self.members.put(key, .{}) catch {};
                         self.members_mtx.unlock();
-                        ret = true;
+                        joined.* = true;
                     }
                 },
                 else => {},
             }
-
-            return ret;
         }
 
         allocator: std.mem.Allocator,
