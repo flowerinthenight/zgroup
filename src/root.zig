@@ -8,27 +8,34 @@ pub fn Group() type {
     return struct {
         const Self = @This();
 
-        // Our generic UDP comms/protocol payload.
+        /// SWIM protocol generic commands.
+        pub const Command = enum(u8) {
+            exit,
+            ack,
+            nack,
+            join,
+            ping,
+            indirect_ping,
+        };
+
+        /// Infection-style dissemination (ISD) commands.
+        pub const IsdCommand = enum(u8) {
+            set_alive,
+            suspect,
+            confirm_alive,
+            confirm_faulty,
+        };
+
+        /// Our generic UDP comms/protocol payload.
         pub const Message = packed struct {
-            cmd: Command = .nack,
             name: u128 = 0,
+            cmd: Command = .nack,
+            isd_cmd: IsdCommand = .def_alive,
             src_ip: u32 = 0,
             src_port: u16 = 0,
             dst_ip: u32 = 0,
             dst_port: u16 = 0,
             incarnation: u64 = 0,
-        };
-
-        pub const Command = enum(u8) {
-            exit,
-            nack,
-            join,
-            ping,
-            indirect_ping,
-            ack,
-            suspect,
-            confirm_alive,
-            confirm_faulty,
         };
 
         pub const MemberState = enum(u8) {
@@ -37,12 +44,14 @@ pub fn Group() type {
             faulty,
         };
 
+        /// Per-member context data.
         pub const MemberData = struct {
             state: MemberState = .alive,
             ping_sweep: u1 = 0,
             ping_req_sweep: u1 = 0,
         };
 
+        /// Config for init().
         pub const Config = struct {
             /// We use the name as group identifier when groups are running over the
             /// same network. At the moment, we use the UUID format as we can cast
@@ -78,6 +87,8 @@ pub fn Group() type {
                 .suspected_time = config.suspected_time,
                 .ping_req_k = config.ping_req_k,
                 .members = std.StringHashMap(MemberData).init(allocator),
+                .isd_inbound = std.ArrayList(Message).init(allocator),
+                .isd_outbound = std.ArrayList(Message).init(allocator),
             };
         }
 
@@ -95,31 +106,23 @@ pub fn Group() type {
             server.detach();
             const ticker = try std.Thread.spawn(.{}, Self.tick, .{self});
             ticker.detach();
-
-            const fns = [_]fn (*Self) void{
-                Self.trackSuspectedMe,
-                Self.trackSuspectedOthers,
-                Self.trackSuspectedToAlive,
-                Self.trackRemoved,
-            };
-
-            inline for (fns) |f| {
-                const t = try std.Thread.spawn(.{}, f, .{self});
-                t.detach();
-            }
         }
 
         /// Cleanup Self instance. At the moment, it is expected for this
         /// code to be long running until process is terminated.
         pub fn deinit(self: *Self) void {
+            log.debug("deinit:", .{});
+
             // TODO:
             // 1. Free keys in members.
             // 2. Release members.
-            // 3. See how to gracefuly exit threads.
-
-            log.debug("deinit:", .{});
+            // 3. Release isd_inbound.
+            // 4. Release isd_outbound.
+            // 5. See how to gracefuly exit threads.
 
             self.members.deinit();
+            self.isd_inbound.deinit();
+            self.isd_outbound.deinit();
         }
 
         /// Ask an instance to join an existing group. `joined` will be set to true if
@@ -140,6 +143,7 @@ pub fn Group() type {
 
             const buf = try arena.allocator().alloc(u8, @sizeOf(Message));
             const msg: *Message = @ptrCast(@alignCast(buf));
+            try self.presetMessage(msg);
             msg.cmd = .join;
             const src_addr = try std.net.Address.resolveIp(src_ip, src_port);
             const dst_addr = try std.net.Address.resolveIp(dst_ip, dst_port);
@@ -213,7 +217,13 @@ pub fn Group() type {
         // Internal: mark and sweep flag for agent(s) searches.
         ping_req_sweep: u1 = 1,
 
+        // Internal: incarnation number for suspicion subprotocol.
         incarnation: u64 = 0,
+
+        isd_inbound: std.ArrayList(Message),
+        isd_inbound_mtx: std.Thread.Mutex = .{},
+        isd_outbound: std.ArrayList(Message),
+        isd_outbound_mtx: std.Thread.Mutex = .{},
 
         ev_suspected_me: std.Thread.ResetEvent = .{},
         ev_suspected_others: std.Thread.ResetEvent = .{},
@@ -255,6 +265,18 @@ pub fn Group() type {
                 };
 
                 const msg: *Message = @ptrCast(@alignCast(buf));
+
+                switch (msg.isd_cmd) {
+                    .set_alive => {},
+                    .suspect => {
+                        // TODO:
+                        // Check if we receive a `suspected` status in the current
+                        // incarnation. If so, we increase our incarnation number,
+                        // and need to broadcast a confirm_alive message to all.
+                    },
+                    .confirm_alive => {},
+                    .confirm_faulty => {},
+                }
 
                 switch (msg.cmd) {
                     .join => {
@@ -350,20 +372,20 @@ pub fn Group() type {
         // Thread running the SWIM protocol.
         fn tick(self: *Self) !void {
             var gtm = try std.time.Timer.start();
-            var rml = std.ArrayList(*[]const u8).init(self.allocator);
+            // var rml = std.ArrayList(*[]const u8).init(self.allocator);
             var i: usize = 0;
             while (true) : (i += 1) {
-                log.debug("", .{}); // log separator
+                log.debug("[{d}]", .{i}); // log separator
 
                 // Gradually remove faulty nodes.
-                if (rml.popOrNull()) |key| self.removeMember(key);
+                // if (rml.popOrNull()) |key| self.removeMember(key);
 
                 {
                     self.members_mtx.lock();
                     defer self.members_mtx.unlock();
                     var it = self.members.iterator();
                     while (it.next()) |entry| {
-                        if (entry.value_ptr.state == .faulty) rml.append(entry.key_ptr) catch {};
+                        // if (entry.value_ptr.state == .faulty) rml.append(entry.key_ptr) catch {};
                         log.debug("[{d}] members: {s} {any}", .{
                             i,
                             entry.key_ptr.*,
@@ -473,6 +495,9 @@ pub fn Group() type {
 
                         if (do_suspected) {
                             self.setMemberState(ping_key, .suspected);
+
+                            // TODO: dissemination-style suspected propagation.
+
                             var sf = SuspectToFaulty{ .self = self, .key = ping_key };
                             const t = try std.Thread.spawn(.{}, Self.suspectToFaulty, .{&sf});
                             t.detach();
@@ -504,6 +529,12 @@ pub fn Group() type {
             }
         }
 
+        fn presetMessage(self: *Self, msg: *Message) !void {
+            msg.name = try std.fmt.parseUnsigned(u128, self.name, 0);
+            msg.cmd = .nack; // force a valid value
+            msg.isd_cmd = .set_alive; // force a valid value
+        }
+
         // Expected format for `key` is ip:port, eg. 0.0.0.0:8080.
         fn ping(self: *Self, key: *[]const u8, me: *bool) !bool {
             var arena = std.heap.ArenaAllocator.init(self.allocator);
@@ -519,6 +550,7 @@ pub fn Group() type {
 
             const buf = try arena.allocator().alloc(u8, @sizeOf(Message));
             const msg: *Message = @ptrCast(@alignCast(buf));
+            try self.presetMessage(msg);
             msg.cmd = .ping;
 
             try self.send(ip, port, buf);
@@ -552,6 +584,7 @@ pub fn Group() type {
 
             const buf = try arena.allocator().alloc(u8, @sizeOf(Message));
             const msg: *Message = @ptrCast(@alignCast(buf));
+            try args.self.presetMessage(msg);
             msg.cmd = .indirect_ping;
 
             split = std.mem.indexOf(u8, args.dst.*, ":").?;
@@ -576,9 +609,8 @@ pub fn Group() type {
         // Helper function for internal one-shot send/recv. `ptr` here is
         // expected to be *Member. The same message ptr is used for both
         // request and response payloads.
-        fn send(self: *Self, ip: []const u8, port: u16, ptr: []u8) !void {
+        fn send(_: *Self, ip: []const u8, port: u16, ptr: []u8) !void {
             const msg: *Message = @ptrCast(@alignCast(ptr));
-            msg.name = try std.fmt.parseUnsigned(u128, self.name, 0);
             const addr = try std.net.Address.resolveIp(ip, port);
             const sock = try std.posix.socket(
                 std.posix.AF.INET,
@@ -650,38 +682,6 @@ pub fn Group() type {
             defer self.members_mtx.unlock();
             const fr = self.members.fetchRemove(key.*);
             self.allocator.free(fr.?.key);
-        }
-
-        // To be run as a separate thread.
-        pub fn trackSuspectedMe(self: *Self) void {
-            while (true) {
-                self.ev_suspected_me.wait();
-                self.ev_suspected_me.reset();
-            }
-        }
-
-        // To be run as a separate thread.
-        fn trackSuspectedOthers(self: *Self) void {
-            while (true) {
-                self.ev_suspected_others.wait();
-                self.ev_suspected_others.reset();
-            }
-        }
-
-        // To be run as a separate thread.
-        fn trackSuspectedToAlive(self: *Self) void {
-            while (true) {
-                self.ev_suspected_to_alive.wait();
-                self.ev_suspected_to_alive.reset();
-            }
-        }
-
-        // To be run as a separate thread.
-        fn trackRemoved(self: *Self) void {
-            while (true) {
-                self.ev_removed.wait();
-                self.ev_removed.reset();
-            }
         }
     };
 }
