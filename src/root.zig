@@ -51,12 +51,10 @@ pub fn Group() type {
             /// Example: "0xf47ac10b58cc4372a5670e02b2c3d479"
             name: []u8 = undefined,
 
-            /// Member IP address for UDP serving. Use init() to initialize.
-            /// Eg. "0.0.0.0".
+            /// Member IP address for UDP, eg. "0.0.0.0". Use init() to initialize.
             ip: []u8 = undefined,
 
-            /// Member port number for UDP serving. Use init() to initialize.
-            /// Eg. 8080.
+            /// Member port number for UDP, eg. 8080. Use init() to initialize.
             port: u16 = 8080,
 
             /// Our SWIM protocol timeout duration.
@@ -170,20 +168,23 @@ pub fn Group() type {
         /// it to `u128` for easy network sending than, say, a `[]u8`. Use init()
         /// initialize.
         /// Example: "0xf47ac10b58cc4372a5670e02b2c3d479"
+        /// (Same comment as `Config`.)
         name: []u8,
 
-        /// Member IP address for UDP serving. Use init() to initialize.
-        /// Eg. "0.0.0.0".
+        /// Member IP address for UDP, eg. "0.0.0.0". Use init() to initialize.
+        /// (Same comment as `Config`.)
         ip: []u8,
 
-        /// Member port number for UDP serving. Use init() to initialize.
-        /// Eg. 8080.
+        /// Member port number for UDP, eg. 8080. Use init() to initialize.
+        /// (Same comment as `Config`.)
         port: u16,
 
         /// Our SWIM protocol timeout duration.
+        /// (Same comment as `Config`.)
         protocol_time: u64,
 
         /// Suspicion subprotocol timeout duration.
+        /// (Same comment as `Config`.)
         suspected_time: u64,
 
         // Our per-member data. Key format is "ip:port", eg. "0.0.0.0:8080".
@@ -191,6 +192,7 @@ pub fn Group() type {
         members_mtx: std.Thread.Mutex = .{},
 
         /// Number of members we will request to do indirect pings for us (agents).
+        /// (Same comment as `Config`.)
         ping_req_k: u32,
 
         // Internal: mark and sweep flag for round-robin pings.
