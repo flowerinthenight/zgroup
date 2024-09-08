@@ -29,23 +29,7 @@ pub fn build(b: *std.Build) void {
 
     exe.root_module.addImport("zbackoff", mod_zbackoff);
 
-    const s = b.addExecutable(.{
-        .name = "server",
-        .root_source_file = b.path("src/server.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const c = b.addExecutable(.{
-        .name = "client",
-        .root_source_file = b.path("src/client.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
     b.installArtifact(exe);
-    b.installArtifact(s);
-    b.installArtifact(c);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
