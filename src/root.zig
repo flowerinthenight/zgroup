@@ -150,6 +150,7 @@ pub fn Group() type {
         ip: []u8 = undefined,
         port: u16 = 8080,
         protocol_time: u64 = std.time.ns_per_s * 2,
+        suspected_time: u64 = std.time.ns_per_ms * 1500,
         members: std.StringHashMap(MemberData) = undefined,
         members_mtx: std.Thread.Mutex = .{},
         ping_sweep: u1 = 1,
@@ -288,7 +289,21 @@ pub fn Group() type {
         // Thread running the SWIM protocol.
         fn tick(self: *Self) !void {
             var gtm = try std.time.Timer.start();
-            while (true) {
+            var i: usize = 0;
+            while (true) : (i += 1) {
+                {
+                    self.members_mtx.lock();
+                    defer self.members_mtx.unlock();
+                    var it = self.members.iterator();
+                    while (it.next()) |entry| {
+                        log.debug("[{d}] dbg/members: {s} {any}", .{
+                            i,
+                            entry.key_ptr.*,
+                            entry.value_ptr.state,
+                        });
+                    }
+                }
+
                 var skip_sleep = false;
                 var tm = try std.time.Timer.start();
                 var ping_key: *[]const u8 = undefined;
@@ -309,7 +324,7 @@ pub fn Group() type {
                     ptr.ping_sweep = ~ptr.ping_sweep;
                     self.members_mtx.unlock(); // see pair up
 
-                    log.debug("swim: try pinging {s}", .{ping_key.*});
+                    log.debug("[{d}] swim: try pinging {s}", .{ i, ping_key.* });
 
                     var ping_me = false;
                     const ok = self.ping(ping_key, &ping_me) catch false;
@@ -350,30 +365,44 @@ pub fn Group() type {
                             break :b n;
                         };
 
-                        log.debug("ping-req: agents={d}, nk={d}", .{ agents.items.len, nk });
+                        log.debug("[{d}] indirect-ping: agents={d}, nk={d}", .{
+                            i,
+                            agents.items.len,
+                            nk,
+                        });
 
-                        // Reset our sweeper flag for the next round of agent search.
+                        // Reset our sweeper flag for the next round of agent(s) search.
+                        // `2` here implies only us and the other suspected member.
                         if (nk[0] == (nk[1] - 2)) self.ping_req_sweep = ~self.ping_req_sweep;
 
+                        var do_suspected = false;
                         if (agents.items.len > 0) {
                             var ts = std.ArrayList(IndirectPing).init(self.allocator);
                             defer ts.deinit();
                             for (agents.items) |v| {
                                 var td = IndirectPing{ .self = self, .src = v, .dst = ping_key };
-                                td.thread = try std.Thread.spawn(
-                                    .{},
-                                    Self.indirectPing,
-                                    .{&td},
-                                );
-
+                                td.thread = try std.Thread.spawn(.{}, Self.indirectPing, .{&td});
                                 try ts.append(td);
                             }
 
                             for (ts.items) |td| td.thread.join(); // wait for all agents
+                            var ack = false;
+                            for (ts.items) |v| ack = ack or v.ack;
+                            if (!ack) do_suspected = true;
+                        } else {
+                            // `2` here implies only us and the other suspected member.
+                            if (nk[0] == (nk[1] - 2)) do_suspected = true;
+                        }
 
-                            for (ts.items) |v| {
-                                log.debug("ack? {any}", .{v.ack});
-                            }
+                        if (do_suspected) {
+                            self.members_mtx.lock();
+                            defer self.members_mtx.unlock();
+                            const psus = self.members.getPtr(ping_key.*).?;
+                            psus.state = .suspected;
+
+                            var dsus = RemoveSuspected{ .self = self, .key = ping_key };
+                            const t = try std.Thread.spawn(.{}, Self.removeSuspected, .{&dsus});
+                            t.detach();
                         }
                     } else {
                         const count = b: {
@@ -385,7 +414,8 @@ pub fn Group() type {
                         if (ping_me and count > 1) {
                             skip_sleep = true;
                         } else {
-                            log.debug("ack from {s}, me={any}, took {any}", .{
+                            log.debug("[{d}] ack from {s}, me={any}, took {any}", .{
+                                i,
                                 ping_key.*,
                                 ping_me,
                                 std.fmt.fmtDuration(gtm.lap()),
@@ -401,7 +431,7 @@ pub fn Group() type {
                 const elapsed = tm.read();
                 if (elapsed < self.protocol_time and !skip_sleep) {
                     const left = self.protocol_time - elapsed;
-                    log.debug("tick: sleep for {any} <-----", .{std.fmt.fmtDuration(left)});
+                    log.debug("[{d}] tick: sleep for {any} <---", .{ i, std.fmt.fmtDuration(left) });
                     std.time.sleep(left);
                 }
             }
@@ -503,6 +533,27 @@ pub fn Group() type {
             const port = try std.fmt.parseUnsigned(u16, key.*[split + 1 ..], 10);
             if (std.mem.eql(u8, ip, self.ip) and port == self.port) return true;
             return false;
+        }
+
+        const RemoveSuspected = struct {
+            self: *Self,
+            key: *[]const u8,
+        };
+
+        fn removeSuspected(args: *RemoveSuspected) !void {
+            var tm = try std.time.Timer.start();
+            defer log.debug("removeSuspected took {any}", .{std.fmt.fmtDuration(tm.read())});
+            std.time.sleep(args.self.suspected_time);
+
+            {
+                args.self.members_mtx.lock();
+                defer args.self.members_mtx.unlock();
+                const ptr = args.self.members.getPtr(args.key.*).?;
+                if (ptr.state == .suspected) {
+                    const fr = args.self.members.fetchRemove(args.key.*);
+                    args.self.allocator.free(fr.?.key);
+                }
+            }
         }
     };
 }
