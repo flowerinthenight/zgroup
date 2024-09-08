@@ -457,7 +457,7 @@ pub fn Group() type {
                         if (do_suspected) {
                             self.setMemberState(ping_key, .suspected);
                             var dsus = Suspect{ .self = self, .key = ping_key };
-                            const t = try std.Thread.spawn(.{}, Self.suspect, .{&dsus});
+                            const t = try std.Thread.spawn(.{}, Self.suspectToFaulty, .{&dsus});
                             t.detach();
                         }
                     } else {
@@ -579,48 +579,6 @@ pub fn Group() type {
             _ = try std.posix.recv(sock, ptr, 0);
         }
 
-        fn setMemberState(self: *Self, key: *[]const u8, state: MemberState) void {
-            self.members_mtx.lock();
-            defer self.members_mtx.unlock();
-            const ptr = self.members.getPtr(key.*).?;
-            ptr.state = state;
-        }
-
-        // Expected format for `key` is ip:port, eg. 0.0.0.0:8080.
-        fn keyIsMe(self: *Self, key: *[]const u8) !bool {
-            const split = std.mem.indexOf(u8, key.*, ":").?;
-            const ip = key.*[0..split];
-            const port = try std.fmt.parseUnsigned(u16, key.*[split + 1 ..], 10);
-            if (std.mem.eql(u8, ip, self.ip) and port == self.port) return true;
-            return false;
-        }
-
-        const Suspect = struct {
-            self: *Self,
-            key: *[]const u8,
-        };
-
-        // To be run as a separate thread.
-        fn suspect(args: *Suspect) !void {
-            var tm = try std.time.Timer.start();
-            defer log.debug("set .suspected took {any}", .{std.fmt.fmtDuration(tm.read())});
-            std.time.sleep(args.self.suspected_time);
-
-            {
-                args.self.members_mtx.lock();
-                defer args.self.members_mtx.unlock();
-                const ptr = args.self.members.getPtr(args.key.*).?;
-                if (ptr.state == .suspected) ptr.state = .faulty;
-            }
-        }
-
-        fn removeMember(self: *Self, key: *[]const u8) void {
-            self.members_mtx.lock();
-            defer self.members_mtx.unlock();
-            const fr = self.members.fetchRemove(key.*);
-            self.allocator.free(fr.?.key);
-        }
-
         // [0] = # of alive members
         // [1] = # of suspected members
         // [2] = # of faulty members
@@ -640,6 +598,48 @@ pub fn Group() type {
             n[3] = self.members.count();
             self.members_mtx.unlock();
             return n;
+        }
+
+        // Expected format for `key` is ip:port, eg. 0.0.0.0:8080.
+        fn keyIsMe(self: *Self, key: *[]const u8) !bool {
+            const split = std.mem.indexOf(u8, key.*, ":").?;
+            const ip = key.*[0..split];
+            const port = try std.fmt.parseUnsigned(u16, key.*[split + 1 ..], 10);
+            if (std.mem.eql(u8, ip, self.ip) and port == self.port) return true;
+            return false;
+        }
+
+        fn setMemberState(self: *Self, key: *[]const u8, state: MemberState) void {
+            self.members_mtx.lock();
+            defer self.members_mtx.unlock();
+            const ptr = self.members.getPtr(key.*).?;
+            ptr.state = state;
+        }
+
+        const Suspect = struct {
+            self: *Self,
+            key: *[]const u8,
+        };
+
+        // To be run as a separate thread.
+        fn suspectToFaulty(args: *Suspect) !void {
+            var tm = try std.time.Timer.start();
+            defer log.debug("set .suspected took {any}", .{std.fmt.fmtDuration(tm.read())});
+            std.time.sleep(args.self.suspected_time);
+
+            {
+                args.self.members_mtx.lock();
+                defer args.self.members_mtx.unlock();
+                const ptr = args.self.members.getPtr(args.key.*).?;
+                if (ptr.state == .suspected) ptr.state = .faulty;
+            }
+        }
+
+        fn removeMember(self: *Self, key: *[]const u8) void {
+            self.members_mtx.lock();
+            defer self.members_mtx.unlock();
+            const fr = self.members.fetchRemove(key.*);
+            self.allocator.free(fr.?.key);
         }
     };
 }
