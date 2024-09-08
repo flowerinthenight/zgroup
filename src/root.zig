@@ -332,16 +332,26 @@ pub fn Group() type {
         // Thread running the SWIM protocol.
         fn tick(self: *Self) !void {
             var gtm = try std.time.Timer.start();
+            var rml = std.ArrayList(*[]const u8).init(self.allocator);
             var i: usize = 0;
             while (true) : (i += 1) {
                 {
                     log.debug("", .{}); // log separator
 
+                    // Gradually remove faulty nodes.
+                    if (rml.popOrNull()) |v| {
+                        self.members_mtx.lock();
+                        defer self.members_mtx.unlock();
+                        const fr = self.members.fetchRemove(v.*);
+                        self.allocator.free(fr.?.key);
+                    }
+
                     self.members_mtx.lock();
                     defer self.members_mtx.unlock();
                     var it = self.members.iterator();
                     while (it.next()) |entry| {
-                        log.debug("[{d}] dbg/members: {s} {any}", .{
+                        if (entry.value_ptr.state == .faulty) rml.append(entry.key_ptr) catch {};
+                        log.debug("[{d}] members: {s} {any}", .{
                             i,
                             entry.key_ptr.*,
                             entry.value_ptr.state,
@@ -389,24 +399,24 @@ pub fn Group() type {
                             agents.deinit();
                         }
 
-                        // [0] = # of items already requested for ping-req
-                        // [1] = members.count() (since we already had the lock)
+                        // [0] = # of members already requested for ping-req
+                        // [1] = # of alive/suspected members
                         const nk = b: {
                             self.members_mtx.lock();
                             defer self.members_mtx.unlock();
                             var it = self.members.iterator();
-                            var n: [2]usize = .{ 0, 0 };
+                            var n: [2]isize = .{ 0, 0 };
                             while (it.next()) |entry| {
                                 if (try self.keyIsMe(entry.key_ptr)) continue;
                                 if (std.mem.eql(u8, entry.key_ptr.*, ping_key.*)) continue;
                                 if (entry.value_ptr.state != .alive) continue;
+                                if (entry.value_ptr.state != .faulty) n[1] += 1;
                                 if (entry.value_ptr.ping_req_sweep != self.ping_req_sweep) {
                                     try agents.append(entry.key_ptr);
                                     if (agents.items.len >= self.ping_req_k) break;
                                 } else n[0] += 1;
                             }
 
-                            n[1] = self.members.count();
                             break :b n;
                         };
 
@@ -438,6 +448,9 @@ pub fn Group() type {
                             // Let's do the suspicion ourselves directly, without agent(s).
                             // `2` here implies only us and the other suspected member.
                             if (nk[0] == (nk[1] - 2)) do_suspected = true;
+                            if (!do_suspected) {
+                                if (nk[0] + nk[1] == 0) do_suspected = true;
+                            }
                         }
 
                         if (do_suspected) {
@@ -446,15 +459,21 @@ pub fn Group() type {
                             const psus = self.members.getPtr(ping_key.*).?;
                             psus.state = .suspected;
 
-                            var dsus = RemoveSuspected{ .self = self, .key = ping_key };
-                            const t = try std.Thread.spawn(.{}, Self.removeSuspected, .{&dsus});
+                            var dsus = Suspect{ .self = self, .key = ping_key };
+                            const t = try std.Thread.spawn(.{}, Self.suspect, .{&dsus});
                             t.detach();
                         }
                     } else {
                         const count = b: {
                             self.members_mtx.lock();
                             defer self.members_mtx.unlock();
-                            break :b self.members.count();
+                            var it = self.members.iterator();
+                            var n: isize = 0;
+                            while (it.next()) |entry| {
+                                if (entry.value_ptr.state != .faulty) n += 1;
+                            }
+
+                            break :b n;
                         };
 
                         if (ping_me and count > 1) {
@@ -582,13 +601,13 @@ pub fn Group() type {
             return false;
         }
 
-        const RemoveSuspected = struct {
+        const Suspect = struct {
             self: *Self,
             key: *[]const u8,
         };
 
         // To be run as a separate thread.
-        fn removeSuspected(args: *RemoveSuspected) !void {
+        fn suspect(args: *Suspect) !void {
             var tm = try std.time.Timer.start();
             defer log.debug("set .suspected took {any}", .{std.fmt.fmtDuration(tm.read())});
             std.time.sleep(args.self.suspected_time);
@@ -597,10 +616,7 @@ pub fn Group() type {
                 args.self.members_mtx.lock();
                 defer args.self.members_mtx.unlock();
                 const ptr = args.self.members.getPtr(args.key.*).?;
-                if (ptr.state == .suspected) {
-                    const fr = args.self.members.fetchRemove(args.key.*);
-                    args.self.allocator.free(fr.?.key);
-                }
+                if (ptr.state == .suspected) ptr.state = .faulty;
             }
         }
     };
