@@ -19,7 +19,44 @@ const Args = struct {
     args: []u8 = undefined,
 };
 
+const pdata = struct {
+    ev1: *std.Thread.ResetEvent,
+    ev2: *std.Thread.ResetEvent,
+};
+
+fn waiter(p: *pdata) void {
+    for (0..2) |i| {
+        dbg("{d} start wait1\n", .{i});
+        p.ev1.wait();
+        dbg("{d} end wait1, call reset\n", .{i});
+        p.ev1.reset();
+
+        dbg("{d} start wait2\n", .{i});
+        p.ev2.wait();
+        dbg("{d} end wait2, call reset\n", .{i});
+        p.ev2.reset();
+    }
+}
+
 pub fn main() !void {
+    // if (true) {
+    //     var ev1 = std.Thread.ResetEvent{};
+    //     var ev2 = std.Thread.ResetEvent{};
+    //     var data = pdata{ .ev1 = &ev1, .ev2 = &ev2 };
+
+    //     const t = try std.Thread.spawn(.{}, waiter, .{&data});
+    //     t.detach();
+
+    //     std.time.sleep(std.time.ns_per_s * 5);
+    //     ev1.set();
+    //     ev2.set();
+    //     std.time.sleep(std.time.ns_per_s * 5);
+    //     ev1.set();
+    //     ev2.set();
+    //     std.time.sleep(std.time.ns_per_s * 5);
+    //     return;
+    // }
+
     const bo = backoff.Backoff{};
     log.info("val={any}", .{bo.initial});
 
@@ -120,4 +157,29 @@ test "atomic" {
     _ = @atomicLoad(u64, &v, AtomicOrder.seq_cst);
     // print("add={d}\n", .{b});
     dbg("took {any}\n", .{std.fmt.fmtDuration(tm.read())});
+}
+
+test "pop" {
+    var list = std.ArrayList(usize).init(std.testing.allocator);
+    defer list.deinit();
+
+    try list.append(1);
+    try list.append(2);
+    try list.append(3);
+    try list.append(4);
+
+    var sr = list.swapRemove(0);
+    dbg("sr={d}\n", .{sr});
+    sr = list.swapRemove(0);
+    dbg("sr={d}\n", .{sr});
+    sr = list.swapRemove(0);
+    dbg("sr={d}\n", .{sr});
+    sr = list.swapRemove(0);
+    dbg("sr={d}\n", .{sr});
+
+    if (list.popOrNull()) |v| dbg("pop={d}\n", .{v});
+    if (list.popOrNull()) |v| dbg("pop={d}\n", .{v});
+    if (list.popOrNull()) |v| dbg("pop={d}\n", .{v});
+    if (list.popOrNull()) |v| dbg("pop={d}\n", .{v});
+    if (list.popOrNull()) |v| dbg("pop={d}\n", .{v});
 }

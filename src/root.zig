@@ -10,7 +10,7 @@ pub fn Group() type {
 
         // Our generic UDP comms/protocol payload.
         pub const Message = packed struct {
-            cmd: Command = .dummy,
+            cmd: Command = .nack,
             name: u128 = 0,
             src_ip: u32 = 0,
             src_port: u16 = 0,
@@ -27,7 +27,7 @@ pub fn Group() type {
             indirect_ping,
             ack,
             suspect,
-            alive,
+            confirm_alive,
             confirm_faulty,
         };
 
@@ -90,10 +90,23 @@ pub fn Group() type {
             );
 
             try self.members.put(key, .{});
+
             const server = try std.Thread.spawn(.{}, Self.listen, .{self});
             server.detach();
             const ticker = try std.Thread.spawn(.{}, Self.tick, .{self});
             ticker.detach();
+
+            const fns = [_]fn (*Self) void{
+                Self.trackSuspectedMe,
+                Self.trackSuspectedOthers,
+                Self.trackSuspectedToAlive,
+                Self.trackRemoved,
+            };
+
+            inline for (fns) |f| {
+                const t = try std.Thread.spawn(.{}, f, .{self});
+                t.detach();
+            }
         }
 
         /// Cleanup Self instance. At the moment, it is expected for this
@@ -161,7 +174,6 @@ pub fn Group() type {
         }
 
         allocator: std.mem.Allocator,
-        mtx: std.Thread.Mutex = .{},
 
         /// We use the name as group identifier when groups are running over the
         /// same network. At the moment, we use the UUID format as we can cast
@@ -202,6 +214,11 @@ pub fn Group() type {
         ping_req_sweep: u1 = 1,
 
         incarnation: u64 = 0,
+
+        ev_suspected_me: std.Thread.ResetEvent = .{},
+        ev_suspected_others: std.Thread.ResetEvent = .{},
+        ev_suspected_to_alive: std.Thread.ResetEvent = .{},
+        ev_removed: std.Thread.ResetEvent = .{},
 
         // Run internal UDP server.
         fn listen(self: *Self) !void {
@@ -633,6 +650,38 @@ pub fn Group() type {
             defer self.members_mtx.unlock();
             const fr = self.members.fetchRemove(key.*);
             self.allocator.free(fr.?.key);
+        }
+
+        // To be run as a separate thread.
+        pub fn trackSuspectedMe(self: *Self) void {
+            while (true) {
+                self.ev_suspected_me.wait();
+                self.ev_suspected_me.reset();
+            }
+        }
+
+        // To be run as a separate thread.
+        fn trackSuspectedOthers(self: *Self) void {
+            while (true) {
+                self.ev_suspected_others.wait();
+                self.ev_suspected_others.reset();
+            }
+        }
+
+        // To be run as a separate thread.
+        fn trackSuspectedToAlive(self: *Self) void {
+            while (true) {
+                self.ev_suspected_to_alive.wait();
+                self.ev_suspected_to_alive.reset();
+            }
+        }
+
+        // To be run as a separate thread.
+        fn trackRemoved(self: *Self) void {
+            while (true) {
+                self.ev_removed.wait();
+                self.ev_removed.reset();
+            }
         }
     };
 }
