@@ -292,6 +292,8 @@ pub fn Group() type {
             var i: usize = 0;
             while (true) : (i += 1) {
                 {
+                    log.debug("", .{}); // log separator
+
                     self.members_mtx.lock();
                     defer self.members_mtx.unlock();
                     var it = self.members.iterator();
@@ -390,6 +392,7 @@ pub fn Group() type {
                             for (ts.items) |v| ack = ack or v.ack;
                             if (!ack) do_suspected = true;
                         } else {
+                            // Let's do the suspicion ourselves directly, without agent(s).
                             // `2` here implies only us and the other suspected member.
                             if (nk[0] == (nk[1] - 2)) do_suspected = true;
                         }
@@ -431,7 +434,7 @@ pub fn Group() type {
                 const elapsed = tm.read();
                 if (elapsed < self.protocol_time and !skip_sleep) {
                     const left = self.protocol_time - elapsed;
-                    log.debug("[{d}] tick: sleep for {any} <---", .{ i, std.fmt.fmtDuration(left) });
+                    log.debug("[{d}] tick: sleep for {any}", .{ i, std.fmt.fmtDuration(left) });
                     std.time.sleep(left);
                 }
             }
@@ -542,7 +545,7 @@ pub fn Group() type {
 
         fn removeSuspected(args: *RemoveSuspected) !void {
             var tm = try std.time.Timer.start();
-            defer log.debug("removeSuspected took {any}", .{std.fmt.fmtDuration(tm.read())});
+            defer log.debug("set .suspected took {any}", .{std.fmt.fmtDuration(tm.read())});
             std.time.sleep(args.self.suspected_time);
 
             {
