@@ -38,6 +38,7 @@ pub fn Group() type {
             incarnation: u64 = 0,
         };
 
+        /// Possible member states.
         pub const MemberState = enum(u8) {
             alive,
             suspected,
@@ -224,11 +225,6 @@ pub fn Group() type {
         isd_inbound_mtx: std.Thread.Mutex = .{},
         isd_outbound: std.ArrayList(Message),
         isd_outbound_mtx: std.Thread.Mutex = .{},
-
-        ev_suspected_me: std.Thread.ResetEvent = .{},
-        ev_suspected_others: std.Thread.ResetEvent = .{},
-        ev_suspected_to_alive: std.Thread.ResetEvent = .{},
-        ev_removed: std.Thread.ResetEvent = .{},
 
         // Run internal UDP server.
         fn listen(self: *Self) !void {
@@ -555,13 +551,10 @@ pub fn Group() type {
 
             try self.send(ip, port, buf);
 
-            var ret = false;
-            switch (msg.cmd) {
-                .ack => ret = true,
-                else => {},
-            }
-
-            return ret;
+            return switch (msg.cmd) {
+                .ack => true,
+                else => false,
+            };
         }
 
         const IndirectPing = struct {
@@ -652,8 +645,7 @@ pub fn Group() type {
             const split = std.mem.indexOf(u8, key.*, ":").?;
             const ip = key.*[0..split];
             const port = try std.fmt.parseUnsigned(u16, key.*[split + 1 ..], 10);
-            if (std.mem.eql(u8, ip, self.ip) and port == self.port) return true;
-            return false;
+            return if (std.mem.eql(u8, ip, self.ip) and port == self.port) true else false;
         }
 
         fn setMemberState(self: *Self, key: *[]const u8, state: MemberState) void {
