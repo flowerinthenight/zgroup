@@ -44,14 +44,29 @@ pub fn Group() type {
         };
 
         pub const Config = struct {
-            // Format: hexstring, i.e. "0xf47ac10b58cc4372a5670e02b2c3d479".
+            /// We use the name as group identifier when groups are running over the
+            /// same network. At the moment, we use the UUID format as we can cast
+            /// it to `u128` for easy network sending than, say, a `[]u8`. Use init()
+            /// initialize.
+            /// Example: "0xf47ac10b58cc4372a5670e02b2c3d479"
             name: []u8 = undefined,
 
-            // Format: IP address, i.e. "0.0.0.0".
+            /// Member IP address for UDP serving. Use init() to initialize.
+            /// Eg. "0.0.0.0".
             ip: []u8 = undefined,
 
-            // UDP port for this node, i.e. 8080.
-            port: u16 = 0,
+            /// Member port number for UDP serving. Use init() to initialize.
+            /// Eg. 8080.
+            port: u16 = 8080,
+
+            /// Our SWIM protocol timeout duration.
+            protocol_time: u64 = std.time.ns_per_s * 2,
+
+            /// Suspicion subprotocol timeout duration.
+            suspected_time: u64 = std.time.ns_per_ms * 1500,
+
+            /// Number of members we will request to do indirect pings for us (agents).
+            ping_req_k: u32 = 1,
         };
 
         /// Create an instance of Self based on Config.
@@ -61,6 +76,9 @@ pub fn Group() type {
                 .name = config.name,
                 .ip = config.ip,
                 .port = config.port,
+                .protocol_time = config.protocol_time,
+                .suspected_time = config.suspected_time,
+                .ping_req_k = config.ping_req_k,
                 .members = std.StringHashMap(MemberData).init(allocator),
             };
         }
@@ -146,16 +164,41 @@ pub fn Group() type {
         }
 
         allocator: std.mem.Allocator,
-        name: []u8 = undefined,
-        ip: []u8 = undefined,
-        port: u16 = 8080,
-        protocol_time: u64 = std.time.ns_per_s * 2,
-        suspected_time: u64 = std.time.ns_per_ms * 1500,
-        members: std.StringHashMap(MemberData) = undefined,
+
+        /// We use the name as group identifier when groups are running over the
+        /// same network. At the moment, we use the UUID format as we can cast
+        /// it to `u128` for easy network sending than, say, a `[]u8`. Use init()
+        /// initialize.
+        /// Example: "0xf47ac10b58cc4372a5670e02b2c3d479"
+        name: []u8,
+
+        /// Member IP address for UDP serving. Use init() to initialize.
+        /// Eg. "0.0.0.0".
+        ip: []u8,
+
+        /// Member port number for UDP serving. Use init() to initialize.
+        /// Eg. 8080.
+        port: u16,
+
+        /// Our SWIM protocol timeout duration.
+        protocol_time: u64,
+
+        /// Suspicion subprotocol timeout duration.
+        suspected_time: u64,
+
+        // Our per-member data. Key format is "ip:port", eg. "0.0.0.0:8080".
+        members: std.StringHashMap(MemberData),
         members_mtx: std.Thread.Mutex = .{},
+
+        /// Number of members we will request to do indirect pings for us (agents).
+        ping_req_k: u32,
+
+        // Internal: mark and sweep flag for round-robin pings.
         ping_sweep: u1 = 1,
-        ping_req_k: u32 = 1,
+
+        // Internal: mark and sweep flag for agent(s) searches.
         ping_req_sweep: u1 = 1,
+
         incarnation: u64 = 0,
 
         // Run internal UDP server.
@@ -440,7 +483,7 @@ pub fn Group() type {
             }
         }
 
-        // Expected format for `key` is ip:port, i.e. 0.0.0.0:8080.
+        // Expected format for `key` is ip:port, eg. 0.0.0.0:8080.
         fn ping(self: *Self, key: *[]const u8, me: *bool) !bool {
             var arena = std.heap.ArenaAllocator.init(self.allocator);
             defer arena.deinit(); // destroy arena in one go
@@ -529,7 +572,7 @@ pub fn Group() type {
             _ = try std.posix.recv(sock, ptr, 0);
         }
 
-        // Expected format for `key` is ip:port, i.e. 0.0.0.0:8080.
+        // Expected format for `key` is ip:port, eg. 0.0.0.0:8080.
         fn keyIsMe(self: *Self, key: *[]const u8) !bool {
             const split = std.mem.indexOf(u8, key.*, ":").?;
             const ip = key.*[0..split];
