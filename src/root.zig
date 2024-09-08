@@ -161,6 +161,7 @@ pub fn Group() type {
         }
 
         allocator: std.mem.Allocator,
+        mtx: std.Thread.Mutex = .{},
 
         /// We use the name as group identifier when groups are running over the
         /// same network. At the moment, we use the UUID format as we can cast
@@ -455,13 +456,13 @@ pub fn Group() type {
 
                         if (do_suspected) {
                             self.setMemberState(ping_key, .suspected);
-                            var dsus = Suspect{ .self = self, .key = ping_key };
-                            const t = try std.Thread.spawn(.{}, Self.suspectToFaulty, .{&dsus});
+                            var sf = SuspectToFaulty{ .self = self, .key = ping_key };
+                            const t = try std.Thread.spawn(.{}, Self.suspectToFaulty, .{&sf});
                             t.detach();
                         }
                     } else {
                         const n = self.nStates();
-                        if (ping_me and ((n[0] + n[1]) > 1)) { // alive+suspected
+                        if (ping_me and ((n[0] + n[1]) > 1)) { // alive + suspected
                             skip_sleep = true;
                         } else {
                             log.debug("[{d}] ack from {s}, me={any}, took {any}", .{
@@ -473,9 +474,7 @@ pub fn Group() type {
                         }
                     }
                 } else {
-                    self.members_mtx.lock();
                     self.ping_sweep = ~self.ping_sweep;
-                    self.members_mtx.unlock();
                     skip_sleep = true;
                 }
 
@@ -615,23 +614,18 @@ pub fn Group() type {
             ptr.state = state;
         }
 
-        const Suspect = struct {
+        const SuspectToFaulty = struct {
             self: *Self,
             key: *[]const u8,
         };
 
         // To be run as a separate thread.
-        fn suspectToFaulty(args: *Suspect) !void {
-            var tm = try std.time.Timer.start();
-            defer log.debug("set .suspected took {any}", .{std.fmt.fmtDuration(tm.read())});
+        fn suspectToFaulty(args: *SuspectToFaulty) !void {
             std.time.sleep(args.self.suspected_time);
-
-            {
-                args.self.members_mtx.lock();
-                defer args.self.members_mtx.unlock();
-                const ptr = args.self.members.getPtr(args.key.*).?;
-                if (ptr.state == .suspected) ptr.state = .faulty;
-            }
+            args.self.members_mtx.lock();
+            defer args.self.members_mtx.unlock();
+            const ptr = args.self.members.getPtr(args.key.*).?;
+            if (ptr.state == .suspected) ptr.state = .faulty;
         }
 
         fn removeMember(self: *Self, key: *[]const u8) void {
