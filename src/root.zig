@@ -335,17 +335,17 @@ pub fn Group() type {
             var rml = std.ArrayList(*[]const u8).init(self.allocator);
             var i: usize = 0;
             while (true) : (i += 1) {
+                log.debug("", .{}); // log separator
+
+                // Gradually remove faulty nodes.
+                if (rml.popOrNull()) |v| {
+                    self.members_mtx.lock();
+                    defer self.members_mtx.unlock();
+                    const fr = self.members.fetchRemove(v.*);
+                    self.allocator.free(fr.?.key);
+                }
+
                 {
-                    log.debug("", .{}); // log separator
-
-                    // Gradually remove faulty nodes.
-                    if (rml.popOrNull()) |v| {
-                        self.members_mtx.lock();
-                        defer self.members_mtx.unlock();
-                        const fr = self.members.fetchRemove(v.*);
-                        self.allocator.free(fr.?.key);
-                    }
-
                     self.members_mtx.lock();
                     defer self.members_mtx.unlock();
                     var it = self.members.iterator();
@@ -363,21 +363,26 @@ pub fn Group() type {
                 var tm = try std.time.Timer.start();
                 var ping_key: *[]const u8 = undefined;
                 var found = false;
-                self.members_mtx.lock(); // see pair down
-                var iter = self.members.iterator();
-                while (iter.next()) |entry| {
-                    if (entry.value_ptr.state != .alive) continue;
-                    if (entry.value_ptr.ping_sweep != self.ping_sweep) {
-                        ping_key = entry.key_ptr;
-                        found = true;
-                        break;
+
+                {
+                    self.members_mtx.lock();
+                    defer self.members_mtx.unlock();
+                    var iter = self.members.iterator();
+                    while (iter.next()) |entry| {
+                        if (entry.value_ptr.state != .alive) continue;
+                        if (entry.value_ptr.ping_sweep != self.ping_sweep) {
+                            ping_key = entry.key_ptr;
+                            found = true;
+                            break;
+                        }
                     }
                 }
 
                 if (found) {
+                    self.members_mtx.lock();
                     const ptr = self.members.getPtr(ping_key.*).?;
                     ptr.ping_sweep = ~ptr.ping_sweep;
-                    self.members_mtx.unlock(); // see pair up
+                    self.members_mtx.unlock();
 
                     log.debug("[{d}] swim: try pinging {s}", .{ i, ping_key.* });
 
@@ -401,7 +406,7 @@ pub fn Group() type {
 
                         // [0] = # of members already requested for ping-req
                         // [1] = # of alive/suspected members
-                        const nk = b: {
+                        const n_k = b: {
                             self.members_mtx.lock();
                             defer self.members_mtx.unlock();
                             var it = self.members.iterator();
@@ -423,12 +428,12 @@ pub fn Group() type {
                         log.debug("[{d}] indirect-ping: agents={d}, nk={d}", .{
                             i,
                             agents.items.len,
-                            nk,
+                            n_k,
                         });
 
                         // Reset our sweeper flag for the next round of agent(s) search.
                         // `2` here implies only us and the other suspected member.
-                        if (nk[0] == (nk[1] - 2)) self.ping_req_sweep = ~self.ping_req_sweep;
+                        if (n_k[0] == (n_k[1] - 2)) self.ping_req_sweep = ~self.ping_req_sweep;
 
                         var do_suspected = false;
                         if (agents.items.len > 0) {
@@ -447,36 +452,27 @@ pub fn Group() type {
                         } else {
                             // Let's do the suspicion ourselves directly, without agent(s).
                             // `2` here implies only us and the other suspected member.
-                            if (nk[0] == (nk[1] - 2)) do_suspected = true;
+                            if (n_k[0] == (n_k[1] - 2)) do_suspected = true;
                             if (!do_suspected) {
-                                if (nk[0] + nk[1] == 0) do_suspected = true;
+                                if (n_k[0] + n_k[1] == 0) do_suspected = true;
                             }
                         }
 
                         if (do_suspected) {
-                            self.members_mtx.lock();
-                            defer self.members_mtx.unlock();
-                            const psus = self.members.getPtr(ping_key.*).?;
-                            psus.state = .suspected;
+                            {
+                                self.members_mtx.lock();
+                                const psus = self.members.getPtr(ping_key.*).?;
+                                psus.state = .suspected;
+                                self.members_mtx.unlock();
+                            }
 
                             var dsus = Suspect{ .self = self, .key = ping_key };
                             const t = try std.Thread.spawn(.{}, Self.suspect, .{&dsus});
                             t.detach();
                         }
                     } else {
-                        const count = b: {
-                            self.members_mtx.lock();
-                            defer self.members_mtx.unlock();
-                            var it = self.members.iterator();
-                            var n: isize = 0;
-                            while (it.next()) |entry| {
-                                if (entry.value_ptr.state != .faulty) n += 1;
-                            }
-
-                            break :b n;
-                        };
-
-                        if (ping_me and count > 1) {
+                        const n = self.nStates();
+                        if (ping_me and ((n[0] + n[1]) > 1)) { // alive+suspected
                             skip_sleep = true;
                         } else {
                             log.debug("[{d}] ack from {s}, me={any}, took {any}", .{
@@ -488,8 +484,9 @@ pub fn Group() type {
                         }
                     }
                 } else {
+                    self.members_mtx.lock();
                     self.ping_sweep = ~self.ping_sweep;
-                    self.members_mtx.unlock(); // see pair up
+                    self.members_mtx.unlock();
                     skip_sleep = true;
                 }
 
@@ -618,6 +615,27 @@ pub fn Group() type {
                 const ptr = args.self.members.getPtr(args.key.*).?;
                 if (ptr.state == .suspected) ptr.state = .faulty;
             }
+        }
+
+        // [0] = # of alive members
+        // [1] = # of suspected members
+        // [2] = # of faulty members
+        // [3] = total number of members
+        fn nStates(self: *Self) [4]usize {
+            var n: [4]usize = .{ 0, 0, 0, 0 };
+            self.members_mtx.lock();
+            var it = self.members.iterator();
+            while (it.next()) |entry| {
+                switch (entry.value_ptr.state) {
+                    .alive => n[0] += 1,
+                    .suspected => n[1] += 1,
+                    .faulty => n[2] += 1,
+                }
+            }
+
+            n[3] = self.members.count();
+            self.members_mtx.unlock();
+            return n;
         }
     };
 }
