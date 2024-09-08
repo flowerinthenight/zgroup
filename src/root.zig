@@ -243,21 +243,20 @@ pub fn Group() type {
                     .join => {
                         if (msg.name == name) {
                             const ipb = std.mem.asBytes(&msg.src_ip);
-                            const key = try std.fmt.allocPrint(
+                            var key = try std.fmt.allocPrint(
                                 self.allocator,
                                 "{d}.{d}.{d}.{d}:{d}",
                                 .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.src_port },
                             );
 
-                            self.members_mtx.lock();
                             const exists = self.members.contains(key);
                             if (!exists) {
+                                self.members_mtx.lock();
                                 self.members.put(key, .{ .state = .alive }) catch {};
                                 self.members_mtx.unlock();
                             } else {
-                                const ptr = self.members.getPtr(key).?;
-                                ptr.state = .alive;
-                                self.members_mtx.unlock();
+                                const pkey: *[]const u8 = &key;
+                                self.setMemberState(pkey, .alive);
                             }
 
                             msg.cmd = .ack;
@@ -304,8 +303,8 @@ pub fn Group() type {
                             log.debug("*** try pinging {s}", .{dst});
 
                             var dummy = false;
-                            const ptr: *[]const u8 = &dst;
-                            const ack = self.ping(ptr, &dummy) catch false;
+                            const pdst: *[]const u8 = &dst;
+                            const ack = self.ping(pdst, &dummy) catch false;
                             msg.cmd = .nack;
                             if (ack) msg.cmd = .ack;
                             _ = try std.posix.sendto(
@@ -340,12 +339,7 @@ pub fn Group() type {
                 log.debug("", .{}); // log separator
 
                 // Gradually remove faulty nodes.
-                if (rml.popOrNull()) |v| {
-                    self.members_mtx.lock();
-                    defer self.members_mtx.unlock();
-                    const fr = self.members.fetchRemove(v.*);
-                    self.allocator.free(fr.?.key);
-                }
+                if (rml.popOrNull()) |key| self.removeMember(key);
 
                 {
                     self.members_mtx.lock();
@@ -461,13 +455,7 @@ pub fn Group() type {
                         }
 
                         if (do_suspected) {
-                            {
-                                self.members_mtx.lock();
-                                const psus = self.members.getPtr(ping_key.*).?;
-                                psus.state = .suspected;
-                                self.members_mtx.unlock();
-                            }
-
+                            self.setMemberState(ping_key, .suspected);
                             var dsus = Suspect{ .self = self, .key = ping_key };
                             const t = try std.Thread.spawn(.{}, Self.suspect, .{&dsus});
                             t.detach();
@@ -558,7 +546,7 @@ pub fn Group() type {
             msg.dst_ip = dst_addr.in.sa.addr;
             msg.dst_port = dst_port;
 
-            try args.self.send(ip, port, buf);
+            args.self.send(ip, port, buf) catch |err| log.err("send failed: {any}", .{err});
 
             switch (msg.cmd) {
                 .ack => {
@@ -591,6 +579,13 @@ pub fn Group() type {
             _ = try std.posix.recv(sock, ptr, 0);
         }
 
+        fn setMemberState(self: *Self, key: *[]const u8, state: MemberState) void {
+            self.members_mtx.lock();
+            defer self.members_mtx.unlock();
+            const ptr = self.members.getPtr(key.*).?;
+            ptr.state = state;
+        }
+
         // Expected format for `key` is ip:port, eg. 0.0.0.0:8080.
         fn keyIsMe(self: *Self, key: *[]const u8) !bool {
             const split = std.mem.indexOf(u8, key.*, ":").?;
@@ -617,6 +612,13 @@ pub fn Group() type {
                 const ptr = args.self.members.getPtr(args.key.*).?;
                 if (ptr.state == .suspected) ptr.state = .faulty;
             }
+        }
+
+        fn removeMember(self: *Self, key: *[]const u8) void {
+            self.members_mtx.lock();
+            defer self.members_mtx.unlock();
+            const fr = self.members.fetchRemove(key.*);
+            self.allocator.free(fr.?.key);
         }
 
         // [0] = # of alive members
