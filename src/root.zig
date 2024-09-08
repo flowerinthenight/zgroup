@@ -519,6 +519,7 @@ pub fn Group() type {
             ack: bool = false,
         };
 
+        // To be run as a separate thread.
         fn indirectPing(args: *IndirectPing) !void {
             log.debug("==> thread: try pinging {s} via {s}", .{ args.dst.*, args.src.* });
             var arena = std.heap.ArenaAllocator.init(args.self.allocator);
@@ -586,6 +587,7 @@ pub fn Group() type {
             key: *[]const u8,
         };
 
+        // To be run as a separate thread.
         fn removeSuspected(args: *RemoveSuspected) !void {
             var tm = try std.time.Timer.start();
             defer log.debug("set .suspected took {any}", .{std.fmt.fmtDuration(tm.read())});
