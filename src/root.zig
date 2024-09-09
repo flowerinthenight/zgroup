@@ -420,6 +420,7 @@ pub fn Group() type {
                 var skip_sleep = false;
 
                 {
+                    // Search for a node to ping (round-robin).
                     self.members_mtx.lock();
                     defer self.members_mtx.unlock();
                     var iter = self.members.iterator();
@@ -435,6 +436,7 @@ pub fn Group() type {
                 }
 
                 {
+                    // Look for a random live node to broadcast.
                     var rl: ?std.ArrayList(*[]const u8) = null;
                     if (key_ptr) |ping_key| {
                         var excludes: [1]*[]const u8 = .{ping_key};
@@ -473,8 +475,7 @@ pub fn Group() type {
                                     p.items[0].*,
                                 });
 
-                                var ts = std.ArrayList(IndirectPing).init(self.allocator);
-                                defer ts.deinit();
+                                var ts = std.ArrayList(IndirectPing).init(arena.allocator());
                                 for (p.items) |v| {
                                     var td = IndirectPing{ .self = self, .src = v, .dst = ping_key };
                                     td.thread = try std.Thread.spawn(.{}, Self.indirectPing, .{&td});
