@@ -183,3 +183,10 @@ test "pop" {
     if (list.popOrNull()) |v| dbg("pop={d}\n", .{v});
     if (list.popOrNull()) |v| dbg("pop={d}\n", .{v});
 }
+
+test "tuple" {
+    var tuple: std.meta.Tuple(&.{ u32, bool }) = .{ 100, true };
+    dbg("{any}\n", .{tuple.len});
+    tuple[0] = 200;
+    dbg("{any}, {d}\n", .{ tuple.len, tuple[0] });
+}

@@ -284,8 +284,7 @@ pub fn Group() type {
                                 .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.src_port },
                             );
 
-                            const exists = self.members.contains(key);
-                            if (!exists) {
+                            if (!self.members.contains(key)) {
                                 self.members_mtx.lock();
                                 self.members.put(key, .{ .state = .alive }) catch {};
                                 self.members_mtx.unlock();
@@ -390,10 +389,9 @@ pub fn Group() type {
                     }
                 }
 
-                var skip_sleep = false;
                 var tm = try std.time.Timer.start();
-                var ping_key: *[]const u8 = undefined;
-                var found = false;
+                var key_ptr: ?*[]const u8 = null;
+                var skip_sleep = false;
 
                 {
                     self.members_mtx.lock();
@@ -402,44 +400,41 @@ pub fn Group() type {
                     while (iter.next()) |entry| {
                         if (entry.value_ptr.state != .alive) continue;
                         if (entry.value_ptr.ping_sweep != self.ping_sweep) {
-                            ping_key = entry.key_ptr;
-                            found = true;
+                            key_ptr = entry.key_ptr;
                             break;
                         }
                     }
                 }
 
-                if (found) {
+                if (key_ptr) |ping_key| {
                     self.members_mtx.lock();
-                    const ptr = self.members.getPtr(ping_key.*).?;
-                    ptr.ping_sweep = ~ptr.ping_sweep;
+                    const ps = self.members.getPtr(ping_key.*).?;
+                    ps.ping_sweep = ~ps.ping_sweep;
                     self.members_mtx.unlock();
 
                     log.debug("[{d}] swim: try pinging {s}", .{ i, ping_key.* });
 
                     var ping_me = false;
-                    const ok = self.ping(ping_key, &ping_me) catch false;
-                    if (!ok) {
+                    const ack = self.ping(ping_key, &ping_me) catch false;
+                    if (!ack) {
                         // Let's ask other members to do indirect ping's for us.
                         var agents = std.ArrayList(*[]const u8).init(self.allocator);
                         defer {
+                            defer agents.deinit();
                             if (agents.items.len > 0) {
                                 for (agents.items) |v| {
                                     self.members_mtx.lock();
                                     defer self.members_mtx.unlock();
-                                    const pk = self.members.getPtr(v.*).?;
-                                    pk.ping_req_sweep = ~pk.ping_req_sweep;
+                                    const prs = self.members.getPtr(v.*).?;
+                                    prs.ping_req_sweep = ~prs.ping_req_sweep;
                                 }
                             }
-
-                            agents.deinit();
                         }
 
                         // [0] = # of members already requested for ping-req
                         // [1] = # of alive/suspected members
                         const n_k = b: {
                             self.members_mtx.lock();
-                            defer self.members_mtx.unlock();
                             var it = self.members.iterator();
                             var n: [2]isize = .{ 0, 0 };
                             while (it.next()) |entry| {
@@ -453,10 +448,11 @@ pub fn Group() type {
                                 } else n[0] += 1;
                             }
 
+                            self.members_mtx.unlock();
                             break :b n;
                         };
 
-                        log.debug("[{d}] indirect-ping: agents={d}, nk={d}", .{
+                        log.debug("[{d}] indirect-ping: agents={d}, n_k={d}", .{
                             i,
                             agents.items.len,
                             n_k,
@@ -477,9 +473,9 @@ pub fn Group() type {
                             }
 
                             for (ts.items) |td| td.thread.join(); // wait for all agents
-                            var ack = false;
-                            for (ts.items) |v| ack = ack or v.ack;
-                            if (!ack) do_suspected = true;
+                            var acks = false;
+                            for (ts.items) |v| acks = acks or v.ack;
+                            if (!acks) do_suspected = true;
                         } else {
                             // Let's do the suspicion ourselves directly, without agent(s).
                             // `2` here implies only us and the other suspected member.
