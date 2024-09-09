@@ -15,7 +15,7 @@ pub fn Group() type {
             nack,
             join,
             ping,
-            indirect_ping,
+            ping_req,
         };
 
         /// Infection-style dissemination (ISD) commands.
@@ -352,7 +352,7 @@ pub fn Group() type {
                             src_addrlen,
                         ) catch |err| log.err("sendto failed: {any}", .{err});
                     },
-                    .indirect_ping => {
+                    .ping_req => {
                         if (msg.name == name) {
                             const ipb = std.mem.asBytes(&msg.dst_ip);
                             var dst = try std.fmt.allocPrint(
@@ -636,7 +636,7 @@ pub fn Group() type {
             const buf = try arena.allocator().alloc(u8, @sizeOf(Message));
             const msg: *Message = @ptrCast(@alignCast(buf));
             try args.self.presetMessage(msg);
-            msg.cmd = .indirect_ping;
+            msg.cmd = .ping_req;
 
             split = std.mem.indexOf(u8, args.dst.*, ":").?;
             const dst_ip = args.dst.*[0..split];
