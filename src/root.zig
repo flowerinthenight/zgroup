@@ -435,19 +435,12 @@ pub fn Group() type {
                     }
                 }
 
-                {
-                    // Look for a random live node to broadcast.
-                    var rl: ?std.ArrayList(*[]const u8) = null;
-                    if (key_ptr) |ping_key| {
-                        var excludes: [1]*[]const u8 = .{ping_key};
-                        if (self.pickRandomNonFaulty(arena.allocator(), &excludes, 1)) |r| {
-                            rl = std.ArrayList(*[]const u8).fromOwnedSlice(arena.allocator(), r);
-                        } else |_| {}
-                    }
-
-                    if (rl) |p| {
-                        if (p.items.len > 0) alive_ptr = p.items[0];
-                    }
+                // Look for a random live non-faulty member to broadcast.
+                if (key_ptr) |ping_key| {
+                    var excludes: [1]*[]const u8 = .{ping_key};
+                    if (self.pickRandomNonFaulty(arena.allocator(), &excludes, 1)) |list| {
+                        if (list.items.len > 0) alive_ptr = list.items[0];
+                    } else |_| {}
                 }
 
                 if (key_ptr) |ping_key| {
@@ -461,26 +454,21 @@ pub fn Group() type {
                     var ping_me = false;
                     const ack = self.ping(ping_key, alive_ptr, &ping_me) catch false;
                     if (!ack) {
-                        var agents: ?std.ArrayList(*[]const u8) = null;
+                        var do_suspected = false;
                         var excludes: [1]*[]const u8 = .{ping_key};
                         if (self.pickRandomNonFaulty(
                             arena.allocator(),
                             &excludes,
                             self.ping_req_k,
-                        )) |r| {
-                            agents = std.ArrayList(*[]const u8).fromOwnedSlice(arena.allocator(), r);
-                        } else |_| {}
-
-                        var do_suspected = false;
-                        if (agents) |p| {
-                            if (p.items.len > 0) {
+                        )) |list| {
+                            if (list.items.len > 0) {
                                 log.debug("[{d}] ping-req: agent={s}", .{
                                     i,
-                                    p.items[0].*,
+                                    list.items[0].*,
                                 });
 
                                 var ts = std.ArrayList(IndirectPing).init(arena.allocator());
-                                for (p.items) |v| {
+                                for (list.items) |v| {
                                     var td = IndirectPing{ .self = self, .src = v, .dst = ping_key };
                                     td.thread = try std.Thread.spawn(.{}, Self.indirectPing, .{&td});
                                     try ts.append(td);
@@ -491,7 +479,7 @@ pub fn Group() type {
                                 for (ts.items) |v| acks = acks or v.ack;
                                 if (!acks) do_suspected = true;
                             } else do_suspected = true;
-                        }
+                        } else |_| {}
 
                         if (do_suspected) {
                             self.setMemberState(ping_key, .suspected);
@@ -542,7 +530,7 @@ pub fn Group() type {
             allocator: std.mem.Allocator,
             excludes: []*[]const u8,
             needs: isize,
-        ) ![]*[]const u8 {
+        ) !std.ArrayList(*[]const u8) {
             std.debug.assert(needs == 1);
             var ret = std.ArrayList(*[]const u8).init(allocator);
             var hm = std.AutoHashMap(u64, *[]const u8).init(allocator);
@@ -577,7 +565,7 @@ pub fn Group() type {
                 }
             }
 
-            return ret.toOwnedSlice();
+            return ret;
         }
 
         // Expected format for `key` is ip:port, eg. 0.0.0.0:8080.
