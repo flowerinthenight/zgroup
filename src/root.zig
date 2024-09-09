@@ -89,8 +89,8 @@ pub fn Group() type {
                 .suspected_time = config.suspected_time,
                 .ping_req_k = config.ping_req_k,
                 .members = std.StringHashMap(MemberData).init(allocator),
-                .isd_inbound = std.ArrayList(Message).init(allocator),
-                .isd_outbound = std.ArrayList(Message).init(allocator),
+                .isd_alive = std.ArrayList(KeyState).init(allocator),
+                .isd_suspect = std.ArrayList(KeyState).init(allocator),
             };
         }
 
@@ -123,8 +123,8 @@ pub fn Group() type {
             // 5. See how to gracefuly exit threads.
 
             self.members.deinit();
-            self.isd_inbound.deinit();
-            self.isd_outbound.deinit();
+            self.isd_alive.deinit();
+            self.isd_suspect.deinit();
         }
 
         /// Ask an instance to join an existing group. `joined` will be set to true if
@@ -177,6 +177,11 @@ pub fn Group() type {
             }
         }
 
+        const KeyState = struct {
+            key: *[]const u8,
+            state: MemberState,
+        };
+
         allocator: std.mem.Allocator,
 
         /// We use the name as group identifier when groups are running over the
@@ -218,10 +223,10 @@ pub fn Group() type {
         // Internal: incarnation number for suspicion subprotocol.
         incarnation: u64 = 0,
 
-        isd_inbound: std.ArrayList(Message),
-        isd_inbound_mtx: std.Thread.Mutex = .{},
-        isd_outbound: std.ArrayList(Message),
-        isd_outbound_mtx: std.Thread.Mutex = .{},
+        isd_alive: std.ArrayList(KeyState),
+        isd_alive_mtx: std.Thread.Mutex = .{},
+        isd_suspect: std.ArrayList(KeyState),
+        isd_suspect_mtx: std.Thread.Mutex = .{},
 
         // Run internal UDP server.
         fn listen(self: *Self) !void {
@@ -449,7 +454,11 @@ pub fn Group() type {
                     ps.ping_sweep = ~ps.ping_sweep;
                     self.members_mtx.unlock();
 
-                    log.debug("[{d}] try pinging {s}", .{ i, ping_key.* });
+                    log.debug("[{d}] try pinging {s}, broadcast {s}", .{
+                        i,
+                        ping_key.*,
+                        if (alive_ptr) |p| p.* else "-",
+                    });
 
                     var ping_me = false;
                     const ack = self.ping(ping_key, alive_ptr, &ping_me) catch false;
@@ -492,7 +501,7 @@ pub fn Group() type {
                         }
                     } else {
                         const n = self.nStates();
-                        if (ping_me and ((n[0] + n[1]) > 1)) { // alive + suspected
+                        if (ping_me and ((n[0] + n[1]) > 1)) { // alive+suspected
                             skip_sleep = true;
                         } else {
                             log.debug("[{d}] ack from {s}, me={any}, took {any}", .{
