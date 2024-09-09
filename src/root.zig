@@ -597,6 +597,7 @@ pub fn Group() type {
             const msg: *Message = @ptrCast(@alignCast(buf));
             try self.presetMessage(msg);
             msg.cmd = .ping;
+
             if (alive_b) |ab| {
                 const split_ab = std.mem.indexOf(u8, ab.*, ":").?;
                 const ip_ab = ab.*[0..split_ab];
