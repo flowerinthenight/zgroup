@@ -283,13 +283,11 @@ pub fn Group() type {
 
                         if (!contains) {
                             self.members_mtx.lock();
-                            self.members.put(key, .{
-                                .state = @enumFromInt(msg.src_state),
-                            }) catch {};
+                            self.members.put(key, .{}) catch {};
                             self.members_mtx.unlock();
                         } else {
                             const pkey: *[]const u8 = &key;
-                            self.setMemberState(pkey, @enumFromInt(msg.src_state));
+                            self.setMemberState(pkey, .alive);
                         }
                     },
                     .suspect => {
@@ -320,13 +318,11 @@ pub fn Group() type {
 
                         if (!contains) {
                             self.members_mtx.lock();
-                            self.members.put(key, .{
-                                .state = @enumFromInt(msg.src_state),
-                            }) catch {};
+                            self.members.put(key, .{}) catch {};
                             self.members_mtx.unlock();
                         } else {
                             const pkey: *[]const u8 = &key;
-                            self.setMemberState(pkey, @enumFromInt(msg.src_state));
+                            self.setMemberState(pkey, .alive);
                         }
                     },
                     .suspect => {
