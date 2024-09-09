@@ -21,22 +21,10 @@ pub fn Group() type {
         /// Infection-style dissemination (ISD) commands.
         pub const IsdCommand = enum(u8) {
             dummy,
-            set_alive,
+            infect,
             suspect,
             confirm_alive,
             confirm_faulty,
-        };
-
-        /// Our generic UDP comms/protocol payload.
-        pub const Message = packed struct {
-            name: u128 = 0,
-            cmd: Command = .nack,
-            isd_cmd: IsdCommand = .dummy,
-            src_ip: u32 = 0,
-            src_port: u16 = 0,
-            dst_ip: u32 = 0,
-            dst_port: u16 = 0,
-            incarnation: u64 = 0,
         };
 
         /// Possible member states.
@@ -44,6 +32,21 @@ pub fn Group() type {
             alive,
             suspected,
             faulty,
+        };
+
+        /// Our generic UDP comms/protocol payload.
+        pub const Message = packed struct {
+            name: u128 = 0,
+            cmd: Command = .nack,
+            isd_src_cmd: IsdCommand = .dummy,
+            src_ip: u32 = 0,
+            src_port: u16 = 0,
+            src_state: u8 = .alive,
+            isd_dst_cmd: IsdCommand = .dummy,
+            dst_ip: u32 = 0,
+            dst_port: u16 = 0,
+            dst_state: u8 = .alive,
+            incarnation: u64 = 0,
         };
 
         /// Per-member context data.
@@ -89,8 +92,7 @@ pub fn Group() type {
                 .suspected_time = config.suspected_time,
                 .ping_req_k = config.ping_req_k,
                 .members = std.StringHashMap(MemberData).init(allocator),
-                .isd_alive = std.ArrayList(KeyState).init(allocator),
-                .isd_suspect = std.ArrayList(KeyState).init(allocator),
+                .isd_queue = std.ArrayList(KeyState).init(allocator),
             };
         }
 
@@ -123,8 +125,7 @@ pub fn Group() type {
             // 5. See how to gracefuly exit threads.
 
             self.members.deinit();
-            self.isd_alive.deinit();
-            self.isd_suspect.deinit();
+            self.isd_queue.deinit();
         }
 
         /// Ask an instance to join an existing group. `joined` will be set to true if
@@ -223,10 +224,8 @@ pub fn Group() type {
         // Internal: incarnation number for suspicion subprotocol.
         incarnation: u64 = 0,
 
-        isd_alive: std.ArrayList(KeyState),
-        isd_alive_mtx: std.Thread.Mutex = .{},
-        isd_suspect: std.ArrayList(KeyState),
-        isd_suspect_mtx: std.Thread.Mutex = .{},
+        isd_queue: std.ArrayList(KeyState),
+        isd_queue_mtx: std.Thread.Mutex = .{},
 
         // Run internal UDP server.
         fn listen(self: *Self) !void {
@@ -267,8 +266,45 @@ pub fn Group() type {
 
                 const msg: *Message = @ptrCast(@alignCast(buf));
 
-                switch (msg.isd_cmd) {
-                    .set_alive => {
+                switch (msg.isd_src_cmd) {
+                    .infect => {
+                        const ipb = std.mem.asBytes(&msg.src_ip);
+                        var key = try std.fmt.allocPrint(
+                            self.allocator, // not arena
+                            "{d}.{d}.{d}.{d}:{d}",
+                            .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.src_port },
+                        );
+
+                        const contains = b: {
+                            self.members_mtx.lock();
+                            defer self.members_mtx.unlock();
+                            break :b self.members.contains(key);
+                        };
+
+                        if (!contains) {
+                            self.members_mtx.lock();
+                            self.members.put(key, .{
+                                .state = @enumFromInt(msg.src_state),
+                            }) catch {};
+                            self.members_mtx.unlock();
+                        } else {
+                            const pkey: *[]const u8 = &key;
+                            self.setMemberState(pkey, @enumFromInt(msg.src_state));
+                        }
+                    },
+                    .suspect => {
+                        // TODO:
+                        // Check if we receive a `suspected` status in the current
+                        // incarnation. If so, we increase our incarnation number,
+                        // and need to broadcast a confirm_alive message to all.
+                    },
+                    .confirm_alive => {},
+                    .confirm_faulty => {},
+                    else => {},
+                }
+
+                switch (msg.isd_dst_cmd) {
+                    .infect => {
                         const ipb = std.mem.asBytes(&msg.dst_ip);
                         var key = try std.fmt.allocPrint(
                             self.allocator, // not arena
@@ -284,11 +320,13 @@ pub fn Group() type {
 
                         if (!contains) {
                             self.members_mtx.lock();
-                            self.members.put(key, .{}) catch {};
+                            self.members.put(key, .{
+                                .state = @enumFromInt(msg.src_state),
+                            }) catch {};
                             self.members_mtx.unlock();
                         } else {
                             const pkey: *[]const u8 = &key;
-                            self.setMemberState(pkey, .alive);
+                            self.setMemberState(pkey, @enumFromInt(msg.src_state));
                         }
                     },
                     .suspect => {
@@ -370,7 +408,8 @@ pub fn Group() type {
 
                             var dummy = false;
                             const pdst: *[]const u8 = &dst;
-                            const ack = self.ping(pdst, null, &dummy) catch false;
+                            const list: std.ArrayList(KeyState) = undefined;
+                            const ack = self.ping(pdst, list, &dummy) catch false;
                             msg.cmd = .nack;
                             if (ack) msg.cmd = .ack;
                             _ = try std.posix.sendto(
@@ -421,7 +460,7 @@ pub fn Group() type {
 
                 var tm = try std.time.Timer.start();
                 var key_ptr: ?*[]const u8 = null;
-                var alive_ptr: ?*[]const u8 = null;
+                var isd: ?std.ArrayList(KeyState) = null;
                 var skip_sleep = false;
 
                 {
@@ -443,9 +482,7 @@ pub fn Group() type {
                 // Look for a random live non-faulty member to broadcast.
                 if (key_ptr) |ping_key| {
                     var excludes: [1]*[]const u8 = .{ping_key};
-                    if (self.pickRandomNonFaulty(arena.allocator(), &excludes, 1)) |list| {
-                        if (list.items.len > 0) alive_ptr = list.items[0];
-                    } else |_| {}
+                    isd = try self.pickRandomNonFaulty(arena.allocator(), &excludes, 2);
                 }
 
                 if (key_ptr) |ping_key| {
@@ -454,41 +491,51 @@ pub fn Group() type {
                     ps.ping_sweep = ~ps.ping_sweep;
                     self.members_mtx.unlock();
 
-                    log.debug("[{d}] try pinging {s}, broadcast {s}", .{
+                    log.debug("[{d}] try pinging {s}, broadcast {d}", .{
                         i,
                         ping_key.*,
-                        if (alive_ptr) |p| p.* else "-",
+                        if (isd) |v| v.items.len else 0,
                     });
 
+                    if (isd) |v| {
+                        for (v.items) |item| {
+                            log.debug("[{d}] try pinging {s}, broadcast {s}", .{
+                                i,
+                                ping_key.*,
+                                item.key.*,
+                            });
+                        }
+                    }
+
                     var ping_me = false;
-                    const ack = self.ping(ping_key, alive_ptr, &ping_me) catch false;
+                    const ack = self.ping(ping_key, isd, &ping_me) catch false;
                     if (!ack) {
                         var do_suspected = false;
                         var excludes: [1]*[]const u8 = .{ping_key};
-                        if (self.pickRandomNonFaulty(
+                        const list = try self.pickRandomNonFaulty(
                             arena.allocator(),
                             &excludes,
                             self.ping_req_k,
-                        )) |list| {
-                            if (list.items.len > 0) {
-                                log.debug("[{d}] ping-req: agent={s}", .{
-                                    i,
-                                    list.items[0].*,
-                                });
+                        );
 
-                                var ts = std.ArrayList(IndirectPing).init(arena.allocator());
-                                for (list.items) |v| {
-                                    var td = IndirectPing{ .self = self, .src = v, .dst = ping_key };
-                                    td.thread = try std.Thread.spawn(.{}, Self.indirectPing, .{&td});
-                                    try ts.append(td);
-                                }
+                        if (list.items.len > 0) {
+                            log.debug("[{d}] ping-req: agent={d}", .{
+                                i,
+                                list.items.len,
+                            });
 
-                                for (ts.items) |td| td.thread.join(); // wait for all agents
-                                var acks = false;
-                                for (ts.items) |v| acks = acks or v.ack;
-                                if (!acks) do_suspected = true;
-                            } else do_suspected = true;
-                        } else |_| {}
+                            var ts = std.ArrayList(IndirectPing).init(arena.allocator());
+                            for (list.items) |v| {
+                                var td = IndirectPing{ .self = self, .src = v.key, .dst = ping_key };
+                                td.thread = try std.Thread.spawn(.{}, Self.indirectPing, .{&td});
+                                try ts.append(td);
+                            }
+
+                            for (ts.items) |td| td.thread.join(); // wait for all agents
+                            var acks = false;
+                            for (ts.items) |v| acks = acks or v.ack;
+                            if (!acks) do_suspected = true;
+                        } else do_suspected = true;
 
                         if (do_suspected) {
                             self.setMemberState(ping_key, .suspected);
@@ -528,57 +575,66 @@ pub fn Group() type {
 
         fn presetMessage(self: *Self, msg: *Message) !void {
             msg.name = try std.fmt.parseUnsigned(u128, self.name, 0);
-            msg.cmd = .dummy; // force a valid value
-            msg.isd_cmd = .dummy; // force a valid value
+            msg.cmd = .dummy;
+            msg.isd_src_cmd = .dummy;
+            msg.isd_dst_cmd = .dummy;
+            msg.src_state = @intFromEnum(MemberState.alive);
+            msg.dst_state = @intFromEnum(MemberState.alive);
         }
 
         // Pick random ping target excluding `excludes` and ourselves.
-        // At the moment, only 1 item is supported (`needs`).
         fn pickRandomNonFaulty(
             self: *Self,
             allocator: std.mem.Allocator,
             excludes: []*[]const u8,
-            needs: isize,
-        ) !std.ArrayList(*[]const u8) {
-            std.debug.assert(needs == 1);
-            var ret = std.ArrayList(*[]const u8).init(allocator);
-            var hm = std.AutoHashMap(u64, *[]const u8).init(allocator);
-            defer hm.deinit();
+            needs: usize,
+        ) !std.ArrayList(KeyState) {
+            const queue_len = b: {
+                self.isd_queue_mtx.lock();
+                defer self.isd_queue_mtx.unlock();
+                break :b self.isd_queue.items.len;
+            };
 
-            {
+            var tmp = std.ArrayList(KeyState).init(allocator);
+            if (queue_len == 0) {
                 self.members_mtx.lock();
                 defer self.members_mtx.unlock();
                 var iter = self.members.iterator();
                 while (iter.next()) |v| {
-                    if (v.value_ptr.state == .faulty) continue;
-                    try hm.put(hm.count(), v.key_ptr);
-                }
-            }
-
-            if (hm.count() > 2) { // us + target
-                const seed = std.crypto.random.int(u64);
-                var prng = std.rand.DefaultPrng.init(seed);
-                const random = prng.random();
-                while (true) {
-                    const rv = random.uintAtMost(u64, hm.count() - 1);
-                    const rk = hm.get(rv);
-                    if (try self.keyIsMe(rk.?)) continue;
+                    if (try self.keyIsMe(v.key_ptr)) continue;
                     var eql: usize = 0;
                     for (excludes) |ex| {
-                        if (std.mem.eql(u8, ex.*, rk.?.*)) eql += 1;
+                        if (std.mem.eql(u8, ex.*, v.key_ptr.*)) eql += 1;
                     }
 
                     if (eql > 0) continue;
-                    try ret.append(rk.?);
-                    break;
+                    try tmp.append(.{ .key = v.key_ptr, .state = v.value_ptr.state });
                 }
             }
 
-            return ret;
+            {
+                self.isd_queue_mtx.lock();
+                defer self.isd_queue_mtx.unlock();
+                while (true) {
+                    if (tmp.popOrNull()) |pop| {
+                        try self.isd_queue.append(pop);
+                    } else break;
+                }
+            }
+
+            var out = std.ArrayList(KeyState).init(allocator);
+            for (0..needs) |_| {
+                self.isd_queue_mtx.lock();
+                defer self.isd_queue_mtx.unlock();
+                if (self.isd_queue.items.len == 0) break;
+                try out.append(self.isd_queue.swapRemove(0));
+            }
+
+            return out;
         }
 
         // Expected format for `key` is ip:port, eg. 0.0.0.0:8080.
-        fn ping(self: *Self, key: *[]const u8, alive_b: ?*[]const u8, me: *bool) !bool {
+        fn ping(self: *Self, key: *[]const u8, isd: ?std.ArrayList(KeyState), me: *bool) !bool {
             var arena = std.heap.ArenaAllocator.init(self.allocator);
             defer arena.deinit(); // destroy arena in one go
 
@@ -595,14 +651,45 @@ pub fn Group() type {
             try self.presetMessage(msg);
             msg.cmd = .ping;
 
-            if (alive_b) |ab| {
-                const split_ab = std.mem.indexOf(u8, ab.*, ":").?;
-                const ip_ab = ab.*[0..split_ab];
-                const port_ab = try std.fmt.parseUnsigned(u16, ab.*[split_ab + 1 ..], 10);
-                const addr = try std.net.Address.resolveIp(ip_ab, port_ab);
-                msg.isd_cmd = .set_alive;
-                msg.dst_ip = addr.in.sa.addr;
-                msg.dst_port = port_ab;
+            if (isd) |isd_v| {
+                switch (isd_v.items.len) {
+                    1 => {
+                        const pop = isd_v.items[0];
+                        log.debug("ping_1 {s}", .{pop.key.*});
+                        const split_b = std.mem.indexOf(u8, pop.key.*, ":").?;
+                        const ip_b = pop.key.*[0..split_b];
+                        const port_b = try std.fmt.parseUnsigned(u16, pop.key.*[split_b + 1 ..], 10);
+                        const addr = try std.net.Address.resolveIp(ip_b, port_b);
+                        msg.isd_src_cmd = .infect;
+                        msg.src_ip = addr.in.sa.addr;
+                        msg.src_port = port_b;
+                        msg.src_state = @intFromEnum(pop.state);
+                    },
+                    2 => {
+                        const pop0 = isd_v.items[0];
+                        log.debug("ping_2.0 {s}", .{pop0.key.*});
+                        const split0 = std.mem.indexOf(u8, pop0.key.*, ":").?;
+                        const ip0 = pop0.key.*[0..split0];
+                        const port0 = try std.fmt.parseUnsigned(u16, pop0.key.*[split0 + 1 ..], 10);
+                        const addr0 = try std.net.Address.resolveIp(ip0, port0);
+                        msg.isd_src_cmd = .infect;
+                        msg.src_ip = addr0.in.sa.addr;
+                        msg.src_port = port0;
+                        msg.src_state = @intFromEnum(pop0.state);
+
+                        const pop1 = isd_v.items[1];
+                        log.debug("ping_2.1 {s}", .{pop1.key.*});
+                        const split1 = std.mem.indexOf(u8, pop1.key.*, ":").?;
+                        const ip1 = pop1.key.*[0..split1];
+                        const port1 = try std.fmt.parseUnsigned(u16, pop1.key.*[split1 + 1 ..], 10);
+                        const addr1 = try std.net.Address.resolveIp(ip1, port1);
+                        msg.isd_dst_cmd = .infect;
+                        msg.dst_ip = addr1.in.sa.addr;
+                        msg.dst_port = port1;
+                        msg.dst_state = @intFromEnum(pop1.state);
+                    },
+                    else => {},
+                }
             }
 
             try self.send(ip, port, buf);
