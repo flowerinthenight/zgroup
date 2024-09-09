@@ -456,21 +456,25 @@ pub fn Group() type {
                     ps.ping_sweep = ~ps.ping_sweep;
                     self.members_mtx.unlock();
 
-                    log.debug("[{d}] swim: try pinging {s}", .{ i, ping_key.* });
+                    log.debug("[{d}] try pinging {s}", .{ i, ping_key.* });
 
                     var ping_me = false;
                     const ack = self.ping(ping_key, alive_ptr, &ping_me) catch false;
                     if (!ack) {
                         var agents: ?std.ArrayList(*[]const u8) = null;
                         var excludes: [1]*[]const u8 = .{ping_key};
-                        if (self.pickRandomNonFaulty(arena.allocator(), &excludes, 1)) |r| {
+                        if (self.pickRandomNonFaulty(
+                            arena.allocator(),
+                            &excludes,
+                            self.ping_req_k,
+                        )) |r| {
                             agents = std.ArrayList(*[]const u8).fromOwnedSlice(arena.allocator(), r);
                         } else |_| {}
 
                         var do_suspected = false;
                         if (agents) |p| {
                             if (p.items.len > 0) {
-                                log.debug("[{d}] indirect-ping: agent={s}", .{
+                                log.debug("[{d}] ping-req: agent={s}", .{
                                     i,
                                     p.items[0].*,
                                 });
