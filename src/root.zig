@@ -270,20 +270,8 @@ pub fn Group() type {
                             .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.src_port },
                         );
 
-                        const contains = b: {
-                            self.members_mtx.lock();
-                            defer self.members_mtx.unlock();
-                            break :b self.members.contains(key);
-                        };
-
-                        if (!contains) {
-                            self.members_mtx.lock();
-                            self.members.put(key, .{ .state = msg.src_state }) catch {};
-                            self.members_mtx.unlock();
-                        } else {
-                            const pkey: *[]const u8 = &key;
-                            self.setMemberState(pkey, msg.src_state);
-                        }
+                        const pkey: *[]const u8 = &key;
+                        self.addOrSet(pkey, msg.src_state);
                     },
                     .suspect => {
                         // TODO:
@@ -305,20 +293,8 @@ pub fn Group() type {
                             .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.dst_port },
                         );
 
-                        const contains = b: {
-                            self.members_mtx.lock();
-                            defer self.members_mtx.unlock();
-                            break :b self.members.contains(key);
-                        };
-
-                        if (!contains) {
-                            self.members_mtx.lock();
-                            self.members.put(key, .{ .state = msg.dst_state }) catch {};
-                            self.members_mtx.unlock();
-                        } else {
-                            const pkey: *[]const u8 = &key;
-                            self.setMemberState(pkey, msg.dst_state);
-                        }
+                        const pkey: *[]const u8 = &key;
+                        self.addOrSet(pkey, msg.src_state);
                     },
                     .suspect => {
                         // TODO:
@@ -341,20 +317,8 @@ pub fn Group() type {
                                 .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.src_port },
                             );
 
-                            const contains = b: {
-                                self.members_mtx.lock();
-                                defer self.members_mtx.unlock();
-                                break :b self.members.contains(key);
-                            };
-
-                            if (!contains) {
-                                self.members_mtx.lock();
-                                self.members.put(key, .{}) catch {};
-                                self.members_mtx.unlock();
-                            } else {
-                                const pkey: *[]const u8 = &key;
-                                self.setMemberState(pkey, .alive);
-                            }
+                            const pkey: *[]const u8 = &key;
+                            self.addOrSet(pkey, .alive);
 
                             msg.cmd = .ack;
                             _ = std.posix.sendto(
@@ -423,6 +387,8 @@ pub fn Group() type {
                     },
                     else => {},
                 }
+
+                self.presetMessage(msg) catch {};
             }
         }
 
@@ -788,6 +754,22 @@ pub fn Group() type {
             defer self.members_mtx.unlock();
             const ptr = self.members.getPtr(key.*).?;
             ptr.state = state;
+        }
+
+        fn addOrSet(self: *Self, key: *[]const u8, state: MemberState) void {
+            const contains = b: {
+                self.members_mtx.lock();
+                defer self.members_mtx.unlock();
+                break :b self.members.contains(key.*);
+            };
+
+            if (!contains) {
+                self.members_mtx.lock();
+                self.members.put(key.*, .{ .state = state }) catch {};
+                self.members_mtx.unlock();
+            } else {
+                self.setMemberState(key, state);
+            }
         }
 
         const SuspectToFaulty = struct {
