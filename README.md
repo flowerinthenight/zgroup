@@ -16,13 +16,13 @@ $ zig build --summary all
 $ ./zig-out/bin/zgroup 0xf47ac10b58cc4372a5670e02b2c3d479 0.0.0.0:8080 :
 
 # Then you can run multiple instances, specifying the join address.
-# Join through the 1st process/node:
+# Join through the 1st process/node (different terminal):
 $ ./zig-out/bin/zgroup 0xf47ac10b58cc4372a5670e02b2c3d479 0.0.0.0:8081 0.0.0.0:8080
 
-# Join through the 2nd process/node:
+# Join through the 2nd process/node (different terminal):
 $ ./zig-out/bin/zgroup 0xf47ac10b58cc4372a5670e02b2c3d479 0.0.0.0:8082 0.0.0.0:8081
 
-# Join through the 1st process/node:
+# Join through the 1st process/node (different terminal):
 $ ./zig-out/bin/zgroup 0xf47ac10b58cc4372a5670e02b2c3d479 0.0.0.0:8083 0.0.0.0:8080
 
 # and so on...
