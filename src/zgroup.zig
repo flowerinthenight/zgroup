@@ -118,12 +118,7 @@ pub fn Group() type {
 
         /// Start group membership tracking.
         pub fn run(self: *Self) !void {
-            const key = try std.fmt.allocPrint(
-                self.allocator,
-                "{s}:{d}",
-                .{ self.ip, self.port },
-            );
-
+            const key = try std.fmt.allocPrint(self.allocator, "{s}:{d}", .{ self.ip, self.port });
             try self.members.put(key, .{});
 
             const server = try std.Thread.spawn(.{}, Self.listen, .{self});
@@ -619,9 +614,9 @@ pub fn Group() type {
             var arena = std.heap.ArenaAllocator.init(self.allocator);
             defer arena.deinit(); // destroy arena in one go
 
-            const split = std.mem.indexOf(u8, key.*, ":").?;
-            const ip = key.*[0..split];
-            const port = try std.fmt.parseUnsigned(u16, key.*[split + 1 ..], 10);
+            const sep = std.mem.indexOf(u8, key.*, ":") orelse return false;
+            const ip = key.*[0..sep];
+            const port = try std.fmt.parseUnsigned(u16, key.*[sep + 1 ..], 10);
             if (std.mem.eql(u8, ip, self.ip) and port == self.port) {
                 me.* = true;
                 return true;
@@ -635,23 +630,23 @@ pub fn Group() type {
             // Piggybacking on pings for our infection-style member/state dissemination.
             if (isd) |isd_v| {
                 switch (isd_v.items.len) {
-                    1 => { // utilize the src_* section only
-                        const pop = isd_v.items[0];
-                        const split_b = std.mem.indexOf(u8, pop.key.*, ":").?;
-                        const ip_b = pop.key.*[0..split_b];
-                        const port_b = try std.fmt.parseUnsigned(u16, pop.key.*[split_b + 1 ..], 10);
-                        const addr = try std.net.Address.resolveIp(ip_b, port_b);
+                    1 => b: { // utilize the src_* section only
+                        const pop0 = isd_v.items[0];
+                        const sep0 = std.mem.indexOf(u8, pop0.key.*, ":") orelse break :b;
+                        const ip0 = pop0.key.*[0..sep0];
+                        const port0 = try std.fmt.parseUnsigned(u16, pop0.key.*[sep0 + 1 ..], 10);
+                        const addr = try std.net.Address.resolveIp(ip0, port0);
                         msg.isd_src_cmd = .infect;
                         msg.src_ip = addr.in.sa.addr;
-                        msg.src_port = port_b;
-                        msg.src_state = pop.state;
+                        msg.src_port = port0;
+                        msg.src_state = pop0.state;
                         msg.isd_dst_cmd = .dummy; // make dst_* invalid
                     },
-                    2 => { // utilize both src_* and dst_* sections
+                    2 => b: { // utilize both src_* and dst_* sections
                         const pop0 = isd_v.items[0];
-                        const split0 = std.mem.indexOf(u8, pop0.key.*, ":").?;
-                        const ip0 = pop0.key.*[0..split0];
-                        const port0 = try std.fmt.parseUnsigned(u16, pop0.key.*[split0 + 1 ..], 10);
+                        const sep0 = std.mem.indexOf(u8, pop0.key.*, ":") orelse break :b;
+                        const ip0 = pop0.key.*[0..sep0];
+                        const port0 = try std.fmt.parseUnsigned(u16, pop0.key.*[sep0 + 1 ..], 10);
                         const addr0 = try std.net.Address.resolveIp(ip0, port0);
                         msg.isd_src_cmd = .infect;
                         msg.src_ip = addr0.in.sa.addr;
@@ -659,9 +654,9 @@ pub fn Group() type {
                         msg.src_state = pop0.state;
 
                         const pop1 = isd_v.items[1];
-                        const split1 = std.mem.indexOf(u8, pop1.key.*, ":").?;
-                        const ip1 = pop1.key.*[0..split1];
-                        const port1 = try std.fmt.parseUnsigned(u16, pop1.key.*[split1 + 1 ..], 10);
+                        const sep1 = std.mem.indexOf(u8, pop1.key.*, ":") orelse break :b;
+                        const ip1 = pop1.key.*[0..sep1];
+                        const port1 = try std.fmt.parseUnsigned(u16, pop1.key.*[sep1 + 1 ..], 10);
                         const addr1 = try std.net.Address.resolveIp(ip1, port1);
                         msg.isd_dst_cmd = .infect;
                         msg.dst_ip = addr1.in.sa.addr;
@@ -694,18 +689,18 @@ pub fn Group() type {
             var arena = std.heap.ArenaAllocator.init(args.self.allocator);
             defer arena.deinit(); // destroy arena in one go
 
-            var split = std.mem.indexOf(u8, args.src.*, ":").?;
-            const ip = args.src.*[0..split];
-            const port = try std.fmt.parseUnsigned(u16, args.src.*[split + 1 ..], 10);
+            var sep = std.mem.indexOf(u8, args.src.*, ":") orelse return;
+            const ip = args.src.*[0..sep];
+            const port = try std.fmt.parseUnsigned(u16, args.src.*[sep + 1 ..], 10);
 
             const buf = try arena.allocator().alloc(u8, @sizeOf(Message));
             const msg: *Message = @ptrCast(@alignCast(buf));
             try args.self.presetMessage(msg);
             msg.cmd = .ping_req;
 
-            split = std.mem.indexOf(u8, args.dst.*, ":").?;
-            const dst_ip = args.dst.*[0..split];
-            const dst_port = try std.fmt.parseUnsigned(u16, args.dst.*[split + 1 ..], 10);
+            sep = std.mem.indexOf(u8, args.dst.*, ":") orelse return;
+            const dst_ip = args.dst.*[0..sep];
+            const dst_port = try std.fmt.parseUnsigned(u16, args.dst.*[sep + 1 ..], 10);
             const dst_addr = try std.net.Address.resolveIp(dst_ip, dst_port);
             msg.dst_ip = dst_addr.in.sa.addr;
             msg.dst_port = dst_port;
@@ -767,17 +762,20 @@ pub fn Group() type {
 
         // Expected format for `key` is ip:port, eg. 0.0.0.0:8080.
         fn keyIsMe(self: *Self, key: *[]const u8) !bool {
-            const split = std.mem.indexOf(u8, key.*, ":").?;
-            const ip = key.*[0..split];
-            const port = try std.fmt.parseUnsigned(u16, key.*[split + 1 ..], 10);
-            return if (std.mem.eql(u8, ip, self.ip) and port == self.port) true else false;
+            const split = std.mem.indexOf(u8, key.*, ":");
+            if (split) |sep| {
+                const ip = key.*[0..sep];
+                const port = try std.fmt.parseUnsigned(u16, key.*[sep + 1 ..], 10);
+                const me = std.mem.eql(u8, ip, self.ip) and port == self.port;
+                return if (me) true else false;
+            } else return false;
         }
 
         fn setMemberState(self: *Self, key: *[]const u8, state: MemberState) void {
             self.members_mtx.lock();
             defer self.members_mtx.unlock();
-            const ptr = self.members.getPtr(key.*).?;
-            ptr.state = state;
+            const ptr = self.members.getPtr(key.*);
+            if (ptr) |pv| pv.state = state;
         }
 
         // Add a new member or update an existing member's state.
@@ -808,15 +806,17 @@ pub fn Group() type {
             std.time.sleep(args.self.suspected_time);
             args.self.members_mtx.lock();
             defer args.self.members_mtx.unlock();
-            const ptr = args.self.members.getPtr(args.key.*).?;
-            if (ptr.state == .suspected) ptr.state = .faulty;
+            const ptr = args.self.members.getPtr(args.key.*);
+            if (ptr) |pv| {
+                if (pv.state == .suspected) pv.state = .faulty;
+            }
         }
 
         fn removeMember(self: *Self, key: *[]const u8) void {
             self.members_mtx.lock();
             defer self.members_mtx.unlock();
             const fr = self.members.fetchRemove(key.*);
-            self.allocator.free(fr.?.key);
+            if (fr) |frv| self.allocator.free(frv.key);
         }
     };
 }
