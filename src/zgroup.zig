@@ -85,7 +85,11 @@ pub fn Group() type {
             ping_req_k: u32 = 1,
         };
 
-        /// Create an instance of Self based on Config.
+        /// Create an instance of Self based on `config`. The `allocator` will be stored
+        /// internally as the main internal allocator. Arena is not recommended as it's
+        /// going to be used in the internal UDP server and the main loop which is
+        /// expected to be long-running. Some areas will utilize an arena allocator
+        /// based on the input allocator when it's appropriate.
         pub fn init(allocator: std.mem.Allocator, config: *const Config) !Self {
             return Self{
                 .allocator = allocator,
@@ -107,9 +111,7 @@ pub fn Group() type {
             // TODO:
             // 1. Free keys in members.
             // 2. Release members.
-            // 3. Release isd_inbound.
-            // 4. Release isd_outbound.
-            // 5. See how to gracefuly exit threads.
+            // 3. See how to gracefuly exit threads.
 
             self.members.deinit();
         }
@@ -546,6 +548,7 @@ pub fn Group() type {
             }
         }
 
+        // Set default values for the message.
         fn presetMessage(self: *Self, msg: *Message) !void {
             msg.name = try std.fmt.parseUnsigned(u128, self.name, 0);
             msg.cmd = .dummy;
@@ -555,7 +558,8 @@ pub fn Group() type {
             msg.dst_state = .alive;
         }
 
-        // Pick random ping target excluding `excludes` and ourselves.
+        // Pick random ping target excluding `excludes` and ourselves. The return ArrayList
+        // will be owned by the caller and is expected to be freed outside of this function.
         fn pickRandomNonFaulty(
             self: *Self,
             allocator: std.mem.Allocator, // arena
