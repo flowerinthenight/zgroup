@@ -407,7 +407,7 @@ pub fn Group() type {
                     defer self.members_mtx.unlock();
                     var it = self.members.iterator();
                     while (it.next()) |entry| {
-                        log.debug("[{d}] members: ip={s}, state={any}", .{
+                        log.debug("[{d}] members: key={s}, state={any}", .{
                             i,
                             entry.key_ptr.*,
                             entry.value_ptr.state,
