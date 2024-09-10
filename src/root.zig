@@ -548,6 +548,7 @@ pub fn Group() type {
         ) !std.ArrayList(KeyState) {
             var out = std.ArrayList(KeyState).init(allocator);
             var hm = std.AutoHashMap(u64, KeyState).init(allocator);
+            defer hm.deinit(); // noop
 
             {
                 self.members_mtx.lock();
@@ -612,6 +613,7 @@ pub fn Group() type {
             try self.presetMessage(msg);
             msg.cmd = .ping;
 
+            // Piggybacking on pings for our infection style state dissemination.
             if (isd) |isd_v| {
                 switch (isd_v.items.len) {
                     1 => {
@@ -701,7 +703,7 @@ pub fn Group() type {
         }
 
         // Helper function for internal one-shot send/recv. `ptr` here is
-        // expected to be *Member. The same message ptr is used for both
+        // expected to be *Message. The same message ptr is used for both
         // request and response payloads.
         fn send(_: *Self, ip: []const u8, port: u16, ptr: []u8) !void {
             const msg: *Message = @ptrCast(@alignCast(ptr));
@@ -727,6 +729,7 @@ pub fn Group() type {
         fn nStates(self: *Self) [4]usize {
             var n: [4]usize = .{ 0, 0, 0, 0 };
             self.members_mtx.lock();
+            defer self.members_mtx.unlock();
             var it = self.members.iterator();
             while (it.next()) |entry| {
                 switch (entry.value_ptr.state) {
@@ -737,7 +740,6 @@ pub fn Group() type {
             }
 
             n[3] = self.members.count();
-            self.members_mtx.unlock();
             return n;
         }
 
@@ -763,13 +765,14 @@ pub fn Group() type {
                 break :b self.members.contains(key.*);
             };
 
-            if (!contains) {
-                self.members_mtx.lock();
-                self.members.put(key.*, .{ .state = state }) catch {};
-                self.members_mtx.unlock();
-            } else {
+            if (contains) {
                 self.setMemberState(key, state);
+                return;
             }
+
+            self.members_mtx.lock();
+            self.members.put(key.*, .{ .state = state }) catch {};
+            self.members_mtx.unlock();
         }
 
         const SuspectToFaulty = struct {
