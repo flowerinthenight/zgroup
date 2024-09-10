@@ -451,8 +451,8 @@ pub fn Group() type {
                     {
                         self.members_mtx.lock();
                         defer self.members_mtx.unlock();
-                        const ps = self.members.getPtr(ping_key.*).?;
-                        ps.ping_sweep = ~ps.ping_sweep;
+                        const ps = self.members.getPtr(ping_key.*);
+                        if (ps) |u| u.ping_sweep = ~u.ping_sweep;
                     }
 
                     log.debug("[{d}] try pinging {s}, broadcast {d}", .{
@@ -762,20 +762,17 @@ pub fn Group() type {
 
         // Expected format for `key` is ip:port, eg. 0.0.0.0:8080.
         fn keyIsMe(self: *Self, key: *[]const u8) !bool {
-            const split = std.mem.indexOf(u8, key.*, ":");
-            if (split) |sep| {
-                const ip = key.*[0..sep];
-                const port = try std.fmt.parseUnsigned(u16, key.*[sep + 1 ..], 10);
-                const me = std.mem.eql(u8, ip, self.ip) and port == self.port;
-                return if (me) true else false;
-            } else return false;
+            const sep = std.mem.indexOf(u8, key.*, ":") orelse return false;
+            const ip = key.*[0..sep];
+            const port = try std.fmt.parseUnsigned(u16, key.*[sep + 1 ..], 10);
+            return if (std.mem.eql(u8, ip, self.ip) and port == self.port) true else false;
         }
 
         fn setMemberState(self: *Self, key: *[]const u8, state: MemberState) void {
             self.members_mtx.lock();
             defer self.members_mtx.unlock();
             const ptr = self.members.getPtr(key.*);
-            if (ptr) |pv| pv.state = state;
+            if (ptr) |u| u.state = state;
         }
 
         // Add a new member or update an existing member's state.
@@ -807,8 +804,8 @@ pub fn Group() type {
             args.self.members_mtx.lock();
             defer args.self.members_mtx.unlock();
             const ptr = args.self.members.getPtr(args.key.*);
-            if (ptr) |pv| {
-                if (pv.state == .suspected) pv.state = .faulty;
+            if (ptr) |u| {
+                if (u.state == .suspected) u.state = .faulty;
             }
         }
 
@@ -816,7 +813,7 @@ pub fn Group() type {
             self.members_mtx.lock();
             defer self.members_mtx.unlock();
             const fr = self.members.fetchRemove(key.*);
-            if (fr) |frv| self.allocator.free(frv.key);
+            if (fr) |u| self.allocator.free(u.key);
         }
     };
 }
