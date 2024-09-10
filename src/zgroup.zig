@@ -1,6 +1,10 @@
+//! zgroup is a library that can manage cluster membership and member failure detection.
+//! It is based on the SWIM Protocol, specifically, SWIM+Inf.+Sus. variant of the gossip
+//! protocol. Linux-only for now.
+//!
+//!   Ref: https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf
+//!
 const std = @import("std");
-const AtomicOrder = std.builtin.AtomicOrder;
-const AtomicRmwOp = std.builtin.AtomicRmwOp;
 
 const log = std.log.scoped(.zgroup);
 
