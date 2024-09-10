@@ -57,9 +57,6 @@ pub fn main() !void {
     //     return;
     // }
 
-    const bo = backoff.Backoff{};
-    log.info("val={any}", .{bo.initial});
-
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var arena = std.heap.ArenaAllocator.init(gpa.allocator());
     defer arena.deinit(); // destroy arena in one go
@@ -107,44 +104,31 @@ pub fn main() !void {
     defer grp.deinit();
 
     i = 0; // reuse
+    var bo = backoff.Backoff{};
     while (true) : (i += 1) {
         std.time.sleep(std.time.ns_per_s * 1);
         if (i == 2 and join_ip.len > 0) {
             var joined = false;
-            try grp.join(
-                hm.getEntry(1).?.value_ptr.args,
-                config.ip,
-                config.port,
-                join_ip,
-                join_port,
-                &joined,
-            );
+            for (0..3) |_| {
+                try grp.join(
+                    hm.getEntry(1).?.value_ptr.args,
+                    config.ip,
+                    config.port,
+                    join_ip,
+                    join_port,
+                    &joined,
+                );
+
+                if (joined) break else std.time.sleep(bo.pause());
+            }
         }
     }
 }
 
 test "backoff" {
+    // Try referencing external dep in test block.
     const bo = backoff.Backoff{};
     dbg("val={any}\n", .{bo.initial});
-
-    var alist = std.ArrayList(Args).init(std.testing.allocator);
-    defer alist.deinit();
-
-    try alist.append(.{ .val = "one" });
-    try alist.append(.{ .val = "two" });
-    try alist.append(.{ .val = "three" });
-    try alist.append(.{ .val = "four" });
-
-    for (alist.items, 0..) |v, i| {
-        dbg("[{d}]val={s}\n", .{ i, v.val });
-    } else {
-        dbg("else items\n", .{});
-    }
-
-    dbg("val[2]={s}\n", .{alist.items[2].val});
-
-    const ms = std.time.milliTimestamp();
-    dbg("time={any}\n", .{ms});
 }
 
 test "atomic" {
