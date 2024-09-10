@@ -308,7 +308,7 @@ pub fn Group() type {
                 }
 
                 switch (msg.cmd) {
-                    .join => {
+                    .join => block: {
                         if (msg.name == name) {
                             const ipb = std.mem.asBytes(&msg.src_ip);
                             var key = try std.fmt.allocPrint(
@@ -328,16 +328,18 @@ pub fn Group() type {
                                 &src_addr,
                                 src_addrlen,
                             ) catch |err| log.err("sendto failed: {any}", .{err});
-                        } else {
-                            msg.cmd = .nack;
-                            _ = std.posix.sendto(
-                                sock,
-                                std.mem.asBytes(msg),
-                                0,
-                                &src_addr,
-                                src_addrlen,
-                            ) catch |err| log.err("sendto failed: {any}", .{err});
+
+                            break :block; // return block
                         }
+
+                        msg.cmd = .nack;
+                        _ = std.posix.sendto(
+                            sock,
+                            std.mem.asBytes(msg),
+                            0,
+                            &src_addr,
+                            src_addrlen,
+                        ) catch |err| log.err("sendto failed: {any}", .{err});
                     },
                     .ping => {
                         msg.cmd = .nack;
@@ -350,7 +352,7 @@ pub fn Group() type {
                             src_addrlen,
                         ) catch |err| log.err("sendto failed: {any}", .{err});
                     },
-                    .ping_req => {
+                    .ping_req => block: {
                         if (msg.name == name) {
                             const ipb = std.mem.asBytes(&msg.dst_ip);
                             var dst = try std.fmt.allocPrint(
@@ -374,16 +376,18 @@ pub fn Group() type {
                                 &src_addr,
                                 src_addrlen,
                             );
-                        } else {
-                            msg.cmd = .nack;
-                            _ = std.posix.sendto(
-                                sock,
-                                std.mem.asBytes(msg),
-                                0,
-                                &src_addr,
-                                src_addrlen,
-                            ) catch |err| log.err("sendto failed: {any}", .{err});
+
+                            break :block; // return block
                         }
+
+                        msg.cmd = .nack;
+                        _ = std.posix.sendto(
+                            sock,
+                            std.mem.asBytes(msg),
+                            0,
+                            &src_addr,
+                            src_addrlen,
+                        ) catch |err| log.err("sendto failed: {any}", .{err});
                     },
                     else => {},
                 }
@@ -465,56 +469,64 @@ pub fn Group() type {
                     }
 
                     var ping_me = false;
-                    const ack = self.ping(ping_key, isd, &ping_me) catch false;
-                    if (!ack) {
-                        var do_suspected = false;
-                        var excludes: [1]*[]const u8 = .{ping_key};
-                        const list = try self.pickRandomNonFaulty(
-                            arena.allocator(),
-                            &excludes,
-                            self.ping_req_k,
-                        );
+                    switch (self.ping(ping_key, isd, &ping_me) catch false) {
+                        false => {
+                            // Let's do indirect ping for this suspicious node.
+                            var do_suspected = false;
+                            var excludes: [1]*[]const u8 = .{ping_key};
+                            const list = try self.pickRandomNonFaulty(
+                                arena.allocator(),
+                                &excludes,
+                                self.ping_req_k,
+                            );
 
-                        if (list.items.len > 0) {
-                            log.debug("[{d}] ping-req: agent={d}", .{
-                                i,
-                                list.items.len,
-                            });
+                            if (list.items.len == 0) do_suspected = true else {
+                                log.debug("[{d}] ping-req: agent={d}", .{
+                                    i,
+                                    list.items.len,
+                                });
 
-                            var ts = std.ArrayList(IndirectPing).init(arena.allocator());
-                            for (list.items) |v| {
-                                var td = IndirectPing{ .self = self, .src = v.key, .dst = ping_key };
-                                td.thread = try std.Thread.spawn(.{}, Self.indirectPing, .{&td});
-                                try ts.append(td);
+                                var ts = std.ArrayList(IndirectPing).init(arena.allocator());
+                                for (list.items) |v| {
+                                    var td = IndirectPing{
+                                        .self = self,
+                                        .src = v.key,
+                                        .dst = ping_key,
+                                    };
+
+                                    td.thr = try std.Thread.spawn(.{}, Self.indirectPing, .{&td});
+                                    try ts.append(td);
+                                }
+
+                                for (ts.items) |td| td.thr.join(); // wait for all agents
+
+                                var acks = false;
+                                for (ts.items) |v| acks = acks or v.ack;
+                                if (!acks) do_suspected = true;
                             }
 
-                            for (ts.items) |td| td.thread.join(); // wait for all agents
-                            var acks = false;
-                            for (ts.items) |v| acks = acks or v.ack;
-                            if (!acks) do_suspected = true;
-                        } else do_suspected = true;
+                            if (do_suspected) {
+                                self.setMemberState(ping_key, .suspected);
 
-                        if (do_suspected) {
-                            self.setMemberState(ping_key, .suspected);
+                                // TODO: dissemination-style suspected propagation.
 
-                            // TODO: dissemination-style suspected propagation.
-
-                            var sf = SuspectToFaulty{ .self = self, .key = ping_key };
-                            const t = try std.Thread.spawn(.{}, Self.suspectToFaulty, .{&sf});
-                            t.detach();
-                        }
-                    } else {
-                        const n = self.nStates();
-                        if (ping_me and ((n[0] + n[1]) > 1)) { // alive+suspected
-                            skip_sleep = true;
-                        } else {
-                            log.debug("[{d}] ack from {s}, me={any}, took {any}", .{
-                                i,
-                                ping_key.*,
-                                ping_me,
-                                std.fmt.fmtDuration(gtm.lap()),
-                            });
-                        }
+                                var sf = SuspectToFaulty{ .self = self, .key = ping_key };
+                                const t = try std.Thread.spawn(.{}, Self.suspectToFaulty, .{&sf});
+                                t.detach();
+                            }
+                        },
+                        else => {
+                            const n = self.nStates();
+                            // `+` here is alive+suspected
+                            if (ping_me and ((n[0] + n[1]) > 1)) skip_sleep = true else {
+                                log.debug("[{d}] ack from {s}, me={any}, took {any}", .{
+                                    i,
+                                    ping_key.*,
+                                    ping_me,
+                                    std.fmt.fmtDuration(gtm.lap()),
+                                });
+                            }
+                        },
                     }
                 } else {
                     self.ping_sweep = ~self.ping_sweep;
@@ -613,10 +625,10 @@ pub fn Group() type {
             try self.presetMessage(msg);
             msg.cmd = .ping;
 
-            // Piggybacking on pings for our infection style state dissemination.
+            // Piggybacking on pings for our infection-style member/state dissemination.
             if (isd) |isd_v| {
                 switch (isd_v.items.len) {
-                    1 => {
+                    1 => { // utilize the src_* section only
                         const pop = isd_v.items[0];
                         const split_b = std.mem.indexOf(u8, pop.key.*, ":").?;
                         const ip_b = pop.key.*[0..split_b];
@@ -626,8 +638,9 @@ pub fn Group() type {
                         msg.src_ip = addr.in.sa.addr;
                         msg.src_port = port_b;
                         msg.src_state = pop.state;
+                        msg.isd_dst_cmd = .dummy; // make dst_* invalid
                     },
-                    2 => {
+                    2 => { // utilize both src_* and dst_* sections
                         const pop0 = isd_v.items[0];
                         const split0 = std.mem.indexOf(u8, pop0.key.*, ":").?;
                         const ip0 = pop0.key.*[0..split0];
@@ -661,7 +674,7 @@ pub fn Group() type {
         }
 
         const IndirectPing = struct {
-            thread: std.Thread = undefined,
+            thr: std.Thread = undefined,
             self: *Self,
             src: *[]const u8 = undefined, // agent
             dst: *[]const u8 = undefined, // target
@@ -689,6 +702,8 @@ pub fn Group() type {
             const dst_addr = try std.net.Address.resolveIp(dst_ip, dst_port);
             msg.dst_ip = dst_addr.in.sa.addr;
             msg.dst_port = dst_port;
+
+            // TODO: Piggyback messages for our infection-style dissemination.
 
             args.self.send(ip, port, buf) catch |err| log.err("send failed: {any}", .{err});
 
@@ -758,6 +773,7 @@ pub fn Group() type {
             ptr.state = state;
         }
 
+        // Add a new member or update an existing member's state.
         fn addOrSet(self: *Self, key: *[]const u8, state: MemberState) void {
             const contains = b: {
                 self.members_mtx.lock();

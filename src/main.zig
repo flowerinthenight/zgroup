@@ -159,29 +159,16 @@ test "atomic" {
     dbg("took {any}\n", .{std.fmt.fmtDuration(tm.read())});
 }
 
-test "pop" {
-    var list = std.ArrayList(usize).init(std.testing.allocator);
-    defer list.deinit();
+test "block" {
+    const flag = false;
+    section: {
+        if (flag) {
+            dbg("early return\n", .{});
+            break :section;
+        }
 
-    try list.append(1);
-    try list.append(2);
-    try list.append(3);
-    try list.append(4);
-
-    var sr = list.swapRemove(0);
-    dbg("sr={d}\n", .{sr});
-    sr = list.swapRemove(0);
-    dbg("sr={d}\n", .{sr});
-    sr = list.swapRemove(0);
-    dbg("sr={d}\n", .{sr});
-    sr = list.swapRemove(0);
-    dbg("sr={d}\n", .{sr});
-
-    if (list.popOrNull()) |v| dbg("pop={d}\n", .{v});
-    if (list.popOrNull()) |v| dbg("pop={d}\n", .{v});
-    if (list.popOrNull()) |v| dbg("pop={d}\n", .{v});
-    if (list.popOrNull()) |v| dbg("pop={d}\n", .{v});
-    if (list.popOrNull()) |v| dbg("pop={d}\n", .{v});
+        dbg("final return\n", .{});
+    }
 }
 
 test "tuple" {
