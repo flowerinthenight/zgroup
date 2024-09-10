@@ -9,7 +9,9 @@ To run locally:
 $ zig build --summary all
 
 # Run the 1st process. The expected args look like:
-# ./binary name_in_uuid member_ip:port join_ip:port
+#
+#   ./binary name_in_uuid member_ip:port join_ip:port
+#
 # Run the first process without the join args.
 $ ./zig-out/bin/zgroup 0xf47ac10b58cc4372a5670e02b2c3d479 0.0.0.0:8080 :
 
