@@ -1,6 +1,6 @@
 **Work-in-progress**
 
-`zgroup` is a library that can manage cluster membership and member failure detection. It is based on the [SWIM Protocol](https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf), specifically, SWIM+Inf.+Sus. variant of the gossip protocol. Linux-only for now.
+**zgroup** is a library that can manage cluster membership and member failure detection. It is based on the [SWIM Protocol](https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf), specifically, **SWIM+Inf.+Susp.** variant of the gossip protocol. Linux-only for now.
 
 To run locally:
 
@@ -28,4 +28,4 @@ $ ./zig-out/bin/zgroup 0xf47ac10b58cc4372a5670e02b2c3d479 0.0.0.0:8083 0.0.0.0:8
 # and so on...
 ```
 
-The implementation is still not complete at this point, especially the infection-style member/state info dissemination.
+The implementation is still a work-in-progress at this point, especially the infection-style member/state info dissemination.
