@@ -453,10 +453,12 @@ pub fn Group() type {
                 }
 
                 if (key_ptr) |ping_key| {
-                    self.members_mtx.lock();
-                    const ps = self.members.getPtr(ping_key.*).?;
-                    ps.ping_sweep = ~ps.ping_sweep;
-                    self.members_mtx.unlock();
+                    {
+                        self.members_mtx.lock();
+                        defer self.members_mtx.unlock();
+                        const ps = self.members.getPtr(ping_key.*).?;
+                        ps.ping_sweep = ~ps.ping_sweep;
+                    }
 
                     log.debug("[{d}] try pinging {s}, broadcast {d}", .{
                         i,
@@ -487,10 +489,7 @@ pub fn Group() type {
                             );
 
                             if (list.items.len == 0) do_suspected = true else {
-                                log.debug("[{d}] ping-req: agent={d}", .{
-                                    i,
-                                    list.items.len,
-                                });
+                                log.debug("[{d}] ping-req: agent={d}", .{ i, list.items.len });
 
                                 var ts = std.ArrayList(IndirectPing).init(arena.allocator());
                                 for (list.items) |v| {
@@ -542,7 +541,7 @@ pub fn Group() type {
                 const elapsed = tm.read();
                 if (elapsed < self.protocol_time and !skip_sleep) {
                     const left = self.protocol_time - elapsed;
-                    log.debug("[{d}] tick: sleep for {any}", .{ i, std.fmt.fmtDuration(left) });
+                    log.debug("[{d}] sleep for {any}", .{ i, std.fmt.fmtDuration(left) });
                     std.time.sleep(left);
                 }
             }
