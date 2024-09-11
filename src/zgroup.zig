@@ -351,17 +351,18 @@ pub fn Group() type {
                     },
                     .ping => {
                         msg.cmd = .nack;
-                        if (msg.name == name) msg.cmd = .ack;
+                        if (msg.name == name) {
+                            msg.cmd = .ack;
+                            const ipb = std.mem.asBytes(&msg.src_ip);
+                            var key = try std.fmt.allocPrint(
+                                self.allocator, // not arena
+                                "{d}.{d}.{d}.{d}:{d}",
+                                .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.src_port },
+                            );
 
-                        const ipb = std.mem.asBytes(&msg.src_ip);
-                        var key = try std.fmt.allocPrint(
-                            self.allocator, // not arena
-                            "{d}.{d}.{d}.{d}:{d}",
-                            .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.src_port },
-                        );
-
-                        const pkey: *[]const u8 = &key;
-                        self.addOrSet(pkey, .alive);
+                            const pkey: *[]const u8 = &key;
+                            self.addOrSet(pkey, .alive);
+                        }
 
                         _ = std.posix.sendto(
                             sock,
@@ -511,6 +512,7 @@ pub fn Group() type {
                             }
                         },
                         else => {
+                            self.addOrSet(ping_key, .alive);
                             log.debug("[{d}] ack from {s}, took {any}", .{
                                 i,
                                 ping_key.*,
