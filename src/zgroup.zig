@@ -87,7 +87,7 @@ pub fn Group() type {
 
         /// Create an instance of Self based on `config`. The `allocator` will be stored
         /// internally as the main internal allocator. Arena is not recommended as it's
-        /// going to be used in the internal UDP server and the main loop which is
+        /// going to be used in the internal UDP server and the main loop which are
         /// expected to be long-running. Some areas will utilize an arena allocator
         /// based on the input allocator when it's appropriate.
         pub fn init(allocator: std.mem.Allocator, config: *const Config) !Self {
@@ -212,8 +212,8 @@ pub fn Group() type {
         members: std.StringHashMap(MemberData),
         members_mtx: std.Thread.Mutex = .{},
 
-        /// Number of members we will request to do indirect pings for us (agents).
-        /// Valid value at the moment is `1`.
+        /// Number of members we will request to do indirect pings for us
+        /// (agents). Valid value at the moment is `1`.
         /// (Same comment as `Config`.)
         ping_req_k: u32,
 
@@ -345,6 +345,7 @@ pub fn Group() type {
                     .ping => {
                         msg.cmd = .nack;
                         if (msg.name == name) msg.cmd = .ack;
+
                         _ = std.posix.sendto(
                             sock,
                             std.mem.asBytes(msg),
@@ -370,13 +371,14 @@ pub fn Group() type {
                             const ack = self.ping(pdst, list, &dummy) catch false;
                             msg.cmd = .nack;
                             if (ack) msg.cmd = .ack;
-                            _ = try std.posix.sendto(
+
+                            _ = std.posix.sendto(
                                 sock,
                                 std.mem.asBytes(msg),
                                 0,
                                 &src_addr,
                                 src_addrlen,
-                            );
+                            ) catch |err| log.err("sendto failed: {any}", .{err});
 
                             break :block; // return block
                         }
