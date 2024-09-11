@@ -56,7 +56,6 @@ pub fn Group() type {
         /// Per-member context data.
         pub const MemberData = struct {
             state: MemberState = .alive,
-            ping_sweep: u1 = 0,
         };
 
         /// Config for init().
@@ -100,6 +99,7 @@ pub fn Group() type {
                 .suspected_time = config.suspected_time,
                 .ping_req_k = config.ping_req_k,
                 .members = std.StringHashMap(MemberData).init(allocator),
+                .ping_queue = std.ArrayList(*[]const u8).init(allocator),
             };
         }
 
@@ -114,6 +114,7 @@ pub fn Group() type {
             // 3. See how to gracefuly exit threads.
 
             self.members.deinit();
+            self.ping_queue.deinit();
         }
 
         /// Start group membership tracking.
@@ -212,13 +213,12 @@ pub fn Group() type {
         members: std.StringHashMap(MemberData),
         members_mtx: std.Thread.Mutex = .{},
 
+        ping_queue: std.ArrayList(*[]const u8),
+
         /// Number of members we will request to do indirect pings for us
         /// (agents). Valid value at the moment is `1`.
         /// (Same comment as `Config`.)
         ping_req_k: u32,
-
-        // Internal: mark and sweep flag for round-robin pings.
-        ping_sweep: u1 = 1,
 
         // Internal: incarnation number for suspicion subprotocol.
         incarnation: u64 = 0,
@@ -365,10 +365,9 @@ pub fn Group() type {
 
                             log.debug("*** try pinging {s}", .{dst});
 
-                            var dummy = false;
                             const pdst: *[]const u8 = &dst;
                             const list: std.ArrayList(KeyState) = undefined;
-                            const ack = self.ping(pdst, list, &dummy) catch false;
+                            const ack = self.ping(pdst, list) catch false;
                             msg.cmd = .nack;
                             if (ack) msg.cmd = .ack;
 
@@ -425,23 +424,9 @@ pub fn Group() type {
                 var tm = try std.time.Timer.start();
                 var key_ptr: ?*[]const u8 = null;
                 var isd: ?std.ArrayList(KeyState) = null;
-                var skip_sleep = false;
 
-                {
-                    // Search for a node to ping (round-robin).
-                    self.members_mtx.lock();
-                    defer self.members_mtx.unlock();
-                    var iter = self.members.iterator();
-                    while (iter.next()) |v| {
-                        if (v.value_ptr.state != .alive) continue;
-                        if (v.value_ptr.ping_sweep != self.ping_sweep) {
-                            if (key_ptr) |_| {} else {
-                                key_ptr = v.key_ptr;
-                                break;
-                            }
-                        }
-                    }
-                }
+                const pt = try self.getPingTarget(arena.allocator());
+                if (pt) |v| key_ptr = v;
 
                 // Look for a random live non-faulty member to broadcast.
                 if (key_ptr) |ping_key| {
@@ -450,13 +435,6 @@ pub fn Group() type {
                 }
 
                 if (key_ptr) |ping_key| {
-                    {
-                        self.members_mtx.lock();
-                        defer self.members_mtx.unlock();
-                        const ps = self.members.getPtr(ping_key.*);
-                        if (ps) |u| u.ping_sweep = ~u.ping_sweep;
-                    }
-
                     log.debug("[{d}] try pinging {s}, broadcast {d}", .{
                         i,
                         ping_key.*,
@@ -473,8 +451,7 @@ pub fn Group() type {
                         }
                     }
 
-                    var ping_me = false;
-                    switch (self.ping(ping_key, isd, &ping_me) catch false) {
+                    switch (self.ping(ping_key, isd) catch false) {
                         false => {
                             // Let's do indirect ping for this suspicious node.
                             var do_suspected = false;
@@ -486,7 +463,7 @@ pub fn Group() type {
                             );
 
                             if (list.items.len == 0) do_suspected = true else {
-                                log.debug("[{d}] ping-req: agent={d}", .{ i, list.items.len });
+                                log.debug("[{d}] ping-req: agent(s)={d}", .{ i, list.items.len });
 
                                 var ts = std.ArrayList(IndirectPing).init(arena.allocator());
                                 for (list.items) |v| {
@@ -518,25 +495,17 @@ pub fn Group() type {
                             }
                         },
                         else => {
-                            const n = self.nStates();
-                            // `+` here is alive+suspected
-                            if (ping_me and ((n[0] + n[1]) > 1)) skip_sleep = true else {
-                                log.debug("[{d}] ack from {s}, me={any}, took {any}", .{
-                                    i,
-                                    ping_key.*,
-                                    ping_me,
-                                    std.fmt.fmtDuration(gtm.lap()),
-                                });
-                            }
+                            log.debug("[{d}] ack from {s}, took {any}", .{
+                                i,
+                                ping_key.*,
+                                std.fmt.fmtDuration(gtm.lap()),
+                            });
                         },
                     }
-                } else {
-                    self.ping_sweep = ~self.ping_sweep;
-                    skip_sleep = true;
                 }
 
                 const elapsed = tm.read();
-                if (elapsed < self.protocol_time and !skip_sleep) {
+                if (elapsed < self.protocol_time) {
                     const left = self.protocol_time - elapsed;
                     log.debug("[{d}] sleep for {any}", .{ i, std.fmt.fmtDuration(left) });
                     std.time.sleep(left);
@@ -552,6 +521,60 @@ pub fn Group() type {
             msg.isd_dst_cmd = .noop;
             msg.src_state = .alive;
             msg.dst_state = .alive;
+        }
+
+        // Round-robin for one sweep, then randomize before doing another sweep.
+        fn getPingTarget(self: *Self, allocator: std.mem.Allocator) !?*[]const u8 {
+            while (true) {
+                const pop = self.ping_queue.popOrNull();
+                if (pop) |v| return v;
+
+                block: {
+                    var hm = std.AutoHashMap(u64, *[]const u8).init(allocator);
+
+                    {
+                        self.members_mtx.lock();
+                        defer self.members_mtx.unlock();
+                        var iter = self.members.iterator();
+                        while (iter.next()) |v| {
+                            if (v.value_ptr.state == .faulty) continue;
+                            if (try self.keyIsMe(v.key_ptr)) continue;
+                            try hm.put(hm.count(), v.key_ptr);
+                        }
+                    }
+
+                    switch (hm.count()) {
+                        0 => return null, // probably just us
+                        1 => {
+                            const get = hm.get(0);
+                            if (get) |v| try self.ping_queue.append(v);
+                            break :block;
+                        },
+                        else => {},
+                    }
+
+                    const seed = std.crypto.random.int(u64);
+                    var prng = std.rand.DefaultPrng.init(seed);
+                    const random = prng.random();
+                    while (true) {
+                        switch (hm.count()) {
+                            0 => break,
+                            1 => {
+                                const get = hm.get(0); // no need for random
+                                if (get) |v| try self.ping_queue.append(v);
+                                break;
+                            },
+                            else => {},
+                        }
+
+                        const rv = random.uintAtMost(u64, hm.count() - 1);
+                        const fr = hm.fetchRemove(rv);
+                        if (fr) |v| try self.ping_queue.append(v.value);
+                    }
+                }
+            }
+
+            unreachable;
         }
 
         // Pick random ping target excluding `excludes` and ourselves. The return ArrayList
@@ -612,17 +635,14 @@ pub fn Group() type {
         }
 
         // Expected format for `key` is ip:port, eg. 0.0.0.0:8080.
-        fn ping(self: *Self, key: *[]const u8, isd: ?std.ArrayList(KeyState), me: *bool) !bool {
+        fn ping(self: *Self, key: *[]const u8, isd: ?std.ArrayList(KeyState)) !bool {
             var arena = std.heap.ArenaAllocator.init(self.allocator);
             defer arena.deinit(); // destroy arena in one go
 
             const sep = std.mem.indexOf(u8, key.*, ":") orelse return false;
             const ip = key.*[0..sep];
             const port = try std.fmt.parseUnsigned(u16, key.*[sep + 1 ..], 10);
-            if (std.mem.eql(u8, ip, self.ip) and port == self.port) {
-                me.* = true;
-                return true;
-            }
+            if (std.mem.eql(u8, ip, self.ip) and port == self.port) return true;
 
             const buf = try arena.allocator().alloc(u8, @sizeOf(Message));
             const msg: *Message = @ptrCast(@alignCast(buf));
