@@ -42,14 +42,20 @@ pub fn Group() type {
         pub const Message = packed struct {
             name: u128 = 0,
             cmd: Command = .nack,
-            isd_src_cmd: IsdCommand = .noop,
             src_ip: u32 = 0,
             src_port: u16 = 0,
             src_state: MemberState = .alive,
-            isd_dst_cmd: IsdCommand = .noop,
             dst_ip: u32 = 0,
             dst_port: u16 = 0,
             dst_state: MemberState = .alive,
+            isd1_cmd: IsdCommand = .noop,
+            isd1_ip: u32 = 0,
+            isd1_port: u16 = 0,
+            isd1_state: MemberState = .alive,
+            isd2_cmd: IsdCommand = .noop,
+            isd2_ip: u32 = 0,
+            isd2_port: u16 = 0,
+            isd2_state: MemberState = .alive,
             incarnation: u64 = 0,
         };
 
@@ -90,6 +96,7 @@ pub fn Group() type {
         /// expected to be long-running. Some areas will utilize an arena allocator
         /// based on the input allocator when it's appropriate.
         pub fn init(allocator: std.mem.Allocator, config: *const Config) !Self {
+            log.debug("init: {s}:{d}", .{ config.ip, config.port });
             return Self{
                 .allocator = allocator,
                 .name = config.name,
@@ -241,8 +248,8 @@ pub fn Group() type {
             defer std.posix.close(sock);
             try setWriteTimeout(sock, 5_000_000);
             try std.posix.bind(sock, &addr.any, addr.getOsSockLen());
-            var src_addr: std.os.linux.sockaddr = undefined;
-            var src_addrlen: std.posix.socklen_t = @sizeOf(std.os.linux.sockaddr);
+            var src_addr: std.posix.sockaddr = undefined;
+            var src_addrlen: std.posix.socklen_t = @sizeOf(std.posix.sockaddr);
 
             while (true) {
                 _ = std.posix.recvfrom(
@@ -262,17 +269,17 @@ pub fn Group() type {
 
                 const msg: *Message = @ptrCast(@alignCast(buf));
 
-                switch (msg.isd_src_cmd) {
+                switch (msg.isd1_cmd) {
                     .infect => {
-                        const ipb = std.mem.asBytes(&msg.src_ip);
+                        const ipb = std.mem.asBytes(&msg.isd1_ip);
                         var key = try std.fmt.allocPrint(
                             self.allocator, // not arena
                             "{d}.{d}.{d}.{d}:{d}",
-                            .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.src_port },
+                            .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.isd1_port },
                         );
 
                         const pkey: *[]const u8 = &key;
-                        self.addOrSet(pkey, msg.src_state);
+                        self.addOrSet(pkey, msg.isd1_state);
                     },
                     .suspect => {
                         // TODO:
@@ -285,17 +292,17 @@ pub fn Group() type {
                     else => {},
                 }
 
-                switch (msg.isd_dst_cmd) {
+                switch (msg.isd2_cmd) {
                     .infect => {
-                        const ipb = std.mem.asBytes(&msg.dst_ip);
+                        const ipb = std.mem.asBytes(&msg.isd2_ip);
                         var key = try std.fmt.allocPrint(
                             self.allocator, // not arena
                             "{d}.{d}.{d}.{d}:{d}",
-                            .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.dst_port },
+                            .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.isd2_port },
                         );
 
                         const pkey: *[]const u8 = &key;
-                        self.addOrSet(pkey, msg.src_state);
+                        self.addOrSet(pkey, msg.isd2_state);
                     },
                     .suspect => {
                         // TODO:
@@ -346,6 +353,16 @@ pub fn Group() type {
                         msg.cmd = .nack;
                         if (msg.name == name) msg.cmd = .ack;
 
+                        const ipb = std.mem.asBytes(&msg.src_ip);
+                        var key = try std.fmt.allocPrint(
+                            self.allocator, // not arena
+                            "{d}.{d}.{d}.{d}:{d}",
+                            .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.src_port },
+                        );
+
+                        const pkey: *[]const u8 = &key;
+                        self.addOrSet(pkey, .alive);
+
                         _ = std.posix.sendto(
                             sock,
                             std.mem.asBytes(msg),
@@ -366,8 +383,7 @@ pub fn Group() type {
                             log.debug("*** try pinging {s}", .{dst});
 
                             const pdst: *[]const u8 = &dst;
-                            const list: std.ArrayList(KeyState) = undefined;
-                            const ack = self.ping(pdst, list) catch false;
+                            const ack = self.ping(pdst, null) catch false;
                             msg.cmd = .nack;
                             if (ack) msg.cmd = .ack;
 
@@ -425,10 +441,10 @@ pub fn Group() type {
                 var key_ptr: ?*[]const u8 = null;
                 var isd: ?std.ArrayList(KeyState) = null;
 
-                const pt = try self.getPingTarget(arena.allocator());
+                const pt = try self.selectPingTarget(arena.allocator());
                 if (pt) |v| key_ptr = v;
 
-                // Look for a random live non-faulty member to broadcast.
+                // Look for a random live non-faulty member(s) to broadcast.
                 if (key_ptr) |ping_key| {
                     var excludes: [1]*[]const u8 = .{ping_key};
                     isd = try self.pickRandomNonFaulty(arena.allocator(), &excludes, 2);
@@ -456,17 +472,17 @@ pub fn Group() type {
                             // Let's do indirect ping for this suspicious node.
                             var do_suspected = false;
                             var excludes: [1]*[]const u8 = .{ping_key};
-                            const list = try self.pickRandomNonFaulty(
+                            const agents = try self.pickRandomNonFaulty(
                                 arena.allocator(),
                                 &excludes,
                                 self.ping_req_k,
                             );
 
-                            if (list.items.len == 0) do_suspected = true else {
-                                log.debug("[{d}] ping-req: agent(s)={d}", .{ i, list.items.len });
+                            if (agents.items.len == 0) do_suspected = true else {
+                                log.debug("[{d}] ping-req: agent(s)={d}", .{ i, agents.items.len });
 
                                 var ts = std.ArrayList(IndirectPing).init(arena.allocator());
-                                for (list.items) |v| {
+                                for (agents.items) |v| {
                                     var td = IndirectPing{
                                         .self = self,
                                         .src = v.key,
@@ -517,20 +533,23 @@ pub fn Group() type {
         fn presetMessage(self: *Self, msg: *Message) !void {
             msg.name = try std.fmt.parseUnsigned(u128, self.name, 0);
             msg.cmd = .noop;
-            msg.isd_src_cmd = .noop;
-            msg.isd_dst_cmd = .noop;
             msg.src_state = .alive;
             msg.dst_state = .alive;
+            msg.isd1_cmd = .noop;
+            msg.isd2_cmd = .noop;
+            msg.isd1_state = .alive;
+            msg.isd2_state = .alive;
         }
 
         // Round-robin for one sweep, then randomize before doing another sweep.
-        fn getPingTarget(self: *Self, allocator: std.mem.Allocator) !?*[]const u8 {
+        fn selectPingTarget(self: *Self, allocator: std.mem.Allocator) !?*[]const u8 {
             while (true) {
                 const pop = self.ping_queue.popOrNull();
                 if (pop) |v| return v;
 
                 block: {
                     var hm = std.AutoHashMap(u64, *[]const u8).init(allocator);
+                    defer hm.deinit();
 
                     {
                         self.members_mtx.lock();
@@ -647,43 +666,48 @@ pub fn Group() type {
             const buf = try arena.allocator().alloc(u8, @sizeOf(Message));
             const msg: *Message = @ptrCast(@alignCast(buf));
             try self.presetMessage(msg);
+
             msg.cmd = .ping;
+            const src_addr = try std.net.Address.resolveIp(self.ip, self.port);
+            msg.src_ip = src_addr.in.sa.addr;
+            msg.src_port = self.port;
+            msg.src_state = .alive;
 
             // Piggybacking on pings for our infection-style member/state dissemination.
             if (isd) |isd_v| {
                 switch (isd_v.items.len) {
-                    1 => b: { // utilize the src_* section only
-                        const pop0 = isd_v.items[0];
-                        const sep0 = std.mem.indexOf(u8, pop0.key.*, ":") orelse break :b;
-                        const ip0 = pop0.key.*[0..sep0];
-                        const port0 = try std.fmt.parseUnsigned(u16, pop0.key.*[sep0 + 1 ..], 10);
-                        const addr = try std.net.Address.resolveIp(ip0, port0);
-                        msg.isd_src_cmd = .infect;
-                        msg.src_ip = addr.in.sa.addr;
-                        msg.src_port = port0;
-                        msg.src_state = pop0.state;
-                        msg.isd_dst_cmd = .noop; // don't use dst_*
-                    },
-                    2 => b: { // utilize both src_* and dst_* sections
-                        const pop0 = isd_v.items[0];
-                        const sep0 = std.mem.indexOf(u8, pop0.key.*, ":") orelse break :b;
-                        const ip0 = pop0.key.*[0..sep0];
-                        const port0 = try std.fmt.parseUnsigned(u16, pop0.key.*[sep0 + 1 ..], 10);
-                        const addr0 = try std.net.Address.resolveIp(ip0, port0);
-                        msg.isd_src_cmd = .infect;
-                        msg.src_ip = addr0.in.sa.addr;
-                        msg.src_port = port0;
-                        msg.src_state = pop0.state;
-
-                        const pop1 = isd_v.items[1];
+                    1 => b: { // utilize the isd1_* section only
+                        const pop1 = isd_v.items[0];
                         const sep1 = std.mem.indexOf(u8, pop1.key.*, ":") orelse break :b;
                         const ip1 = pop1.key.*[0..sep1];
                         const port1 = try std.fmt.parseUnsigned(u16, pop1.key.*[sep1 + 1 ..], 10);
                         const addr1 = try std.net.Address.resolveIp(ip1, port1);
-                        msg.isd_dst_cmd = .infect;
-                        msg.dst_ip = addr1.in.sa.addr;
-                        msg.dst_port = port1;
-                        msg.dst_state = pop1.state;
+                        msg.isd1_cmd = .infect;
+                        msg.isd1_ip = addr1.in.sa.addr;
+                        msg.isd1_port = port1;
+                        msg.isd1_state = pop1.state;
+                        msg.isd2_cmd = .noop; // don't use isd2_*
+                    },
+                    2 => b: { // utilize both isd1_* and isd2_* sections
+                        const pop1 = isd_v.items[0];
+                        const sep1 = std.mem.indexOf(u8, pop1.key.*, ":") orelse break :b;
+                        const ip1 = pop1.key.*[0..sep1];
+                        const port1 = try std.fmt.parseUnsigned(u16, pop1.key.*[sep1 + 1 ..], 10);
+                        const addr1 = try std.net.Address.resolveIp(ip1, port1);
+                        msg.isd1_cmd = .infect;
+                        msg.isd1_ip = addr1.in.sa.addr;
+                        msg.isd1_port = port1;
+                        msg.isd1_state = pop1.state;
+
+                        const pop2 = isd_v.items[1];
+                        const sep2 = std.mem.indexOf(u8, pop2.key.*, ":") orelse break :b;
+                        const ip2 = pop2.key.*[0..sep2];
+                        const port2 = try std.fmt.parseUnsigned(u16, pop2.key.*[sep2 + 1 ..], 10);
+                        const addr2 = try std.net.Address.resolveIp(ip2, port2);
+                        msg.isd2_cmd = .infect;
+                        msg.isd2_ip = addr2.in.sa.addr;
+                        msg.isd2_port = port2;
+                        msg.isd2_state = pop2.state;
                     },
                     else => {},
                 }
@@ -741,11 +765,9 @@ pub fn Group() type {
             }
         }
 
-        // Helper function for internal one-shot send/recv. `ptr` here is
-        // expected to be *Message. The same message ptr is used for both
-        // request and response payloads.
-        fn send(_: *Self, ip: []const u8, port: u16, ptr: []u8) !void {
-            const msg: *Message = @ptrCast(@alignCast(ptr));
+        // Helper function for internal one-shot send/recv. The same
+        // message ptr is used for both request and response payloads.
+        fn send(_: *Self, ip: []const u8, port: u16, msg: []u8) !void {
             const addr = try std.net.Address.resolveIp(ip, port);
             const sock = try std.posix.socket(
                 std.posix.AF.INET,
@@ -757,8 +779,8 @@ pub fn Group() type {
             try setReadTimeout(sock, 5_000_000);
             try setWriteTimeout(sock, 5_000_000);
             try std.posix.connect(sock, &addr.any, addr.getOsSockLen());
-            _ = try std.posix.write(sock, std.mem.asBytes(msg));
-            _ = try std.posix.recv(sock, ptr, 0);
+            _ = try std.posix.write(sock, msg);
+            _ = try std.posix.recv(sock, msg, 0);
         }
 
         // [0] = # of alive members
