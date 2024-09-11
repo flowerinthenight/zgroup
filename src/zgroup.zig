@@ -829,6 +829,7 @@ pub fn Group() type {
         // ISD = Infection-style dissemination.
         fn setIsdInfo(self: *Self, msg: *Message, isd: std.ArrayList(KeyState)) !void {
             switch (isd.items.len) {
+                0 => return,
                 1 => b: { // utilize the isd1_* section only
                     const pop1 = isd.items[0];
                     msg.isd1_cmd = .infect;
@@ -838,7 +839,7 @@ pub fn Group() type {
                         .state = pop1.state,
                     }) catch break :b;
                 },
-                2 => b: { // utilize both isd1_* and isd2_* sections
+                else => b: { // utilize both isd1_* and isd2_* sections
                     const pop1 = isd.items[0];
                     msg.isd1_cmd = .infect;
                     self.setMessageSection(msg, .isd1, .{
@@ -853,7 +854,6 @@ pub fn Group() type {
                         .state = pop2.state,
                     }) catch break :b;
                 },
-                else => {},
             }
         }
 
