@@ -374,14 +374,14 @@ pub fn Group() type {
                     },
                     .ping_req => block: {
                         if (msg.name == name) {
-                            const ipb = std.mem.asBytes(&msg.dst_ip);
+                            const dip = std.mem.asBytes(&msg.dst_ip);
                             var dst = try std.fmt.allocPrint(
                                 arena.allocator(),
                                 "{d}.{d}.{d}.{d}:{d}",
-                                .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.dst_port },
+                                .{ dip[0], dip[1], dip[2], dip[3], msg.dst_port },
                             );
 
-                            log.debug("*** try pinging {s}", .{dst});
+                            log.debug("ping-req: requested to ping {s}", .{dst});
 
                             const pdst: *[]const u8 = &dst;
                             const ack = self.ping(pdst, null) catch false;
@@ -417,7 +417,6 @@ pub fn Group() type {
 
         // Thread running the SWIM protocol.
         fn tick(self: *Self) !void {
-            var gtm = try std.time.Timer.start();
             var i: usize = 0;
             while (true) : (i += 1) {
                 var arena = std.heap.ArenaAllocator.init(self.allocator);
@@ -452,21 +451,11 @@ pub fn Group() type {
                 }
 
                 if (key_ptr) |ping_key| {
-                    log.debug("[{d}] try pinging {s}, broadcast {d}", .{
+                    log.debug("[{d}] try pinging {s}, broadcast(s)={d}", .{
                         i,
                         ping_key.*,
                         if (isd) |v| v.items.len else 0,
                     });
-
-                    if (isd) |v| {
-                        for (v.items) |item| {
-                            log.debug("[{d}] try pinging {s}, broadcast {s}", .{
-                                i,
-                                ping_key.*,
-                                item.key.*,
-                            });
-                        }
-                    }
 
                     switch (self.ping(ping_key, isd) catch false) {
                         false => {
@@ -511,11 +500,7 @@ pub fn Group() type {
                         },
                         else => {
                             self.addOrSet(ping_key, .alive);
-                            log.debug("[{d}] ack from {s}, took {any}", .{
-                                i,
-                                ping_key.*,
-                                std.fmt.fmtDuration(gtm.lap()),
-                            });
+                            log.debug("[{d}] ack from {s}", .{ i, ping_key.* });
                         },
                     }
                 }
@@ -588,7 +573,7 @@ pub fn Group() type {
             self: *Self,
             allocator: std.mem.Allocator, // arena
             excludes: []*[]const u8,
-            needs: usize,
+            max: usize,
         ) !std.ArrayList(KeyState) {
             var out = std.ArrayList(KeyState).init(allocator);
             var hm = std.AutoHashMap(u64, KeyState).init(allocator);
@@ -614,7 +599,7 @@ pub fn Group() type {
                 }
             }
 
-            var limit = needs;
+            var limit = max;
             if (limit > hm.count()) limit = hm.count();
             if (hm.count() == 1 and limit > 0) {
                 const get = hm.get(0);
@@ -679,7 +664,7 @@ pub fn Group() type {
 
         // To be run as a separate thread.
         fn indirectPing(args: *IndirectPing) !void {
-            log.debug("==> thread: try pinging {s} via {s}", .{ args.dst.*, args.src.* });
+            log.debug("[thread] try pinging {s} via {s}", .{ args.dst.*, args.src.* });
             var arena = std.heap.ArenaAllocator.init(args.self.allocator);
             defer arena.deinit(); // destroy arena in one go
 
@@ -715,7 +700,7 @@ pub fn Group() type {
             switch (msg.cmd) {
                 .ack => {
                     args.self.addOrSet(args.src, .alive);
-                    log.debug("==> thread: got ack from {s}", .{args.src.*});
+                    log.debug("[thread] got ack from {s}", .{args.src.*});
                     const ptr = &args.ack;
                     ptr.* = true;
                 },
