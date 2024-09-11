@@ -488,6 +488,7 @@ pub fn Group() type {
                                         .self = self,
                                         .src = v.key,
                                         .dst = ping_key,
+                                        .isd = isd,
                                     };
 
                                     td.thr = try std.Thread.spawn(.{}, Self.indirectPing, .{&td});
@@ -503,9 +504,6 @@ pub fn Group() type {
 
                             if (do_suspected) {
                                 self.setMemberState(ping_key, .suspected);
-
-                                // TODO: dissemination-style suspected propagation.
-
                                 var sf = SuspectToFaulty{ .self = self, .key = ping_key };
                                 const t = try std.Thread.spawn(.{}, Self.suspectToFaulty, .{&sf});
                                 t.detach();
@@ -531,18 +529,6 @@ pub fn Group() type {
             }
         }
 
-        // Set default values for the message.
-        fn presetMessage(self: *Self, msg: *Message) !void {
-            msg.name = try std.fmt.parseUnsigned(u128, self.name, 0);
-            msg.cmd = .noop;
-            msg.src_state = .alive;
-            msg.dst_state = .alive;
-            msg.isd1_cmd = .noop;
-            msg.isd2_cmd = .noop;
-            msg.isd1_state = .alive;
-            msg.isd2_state = .alive;
-        }
-
         // Round-robin for one sweep, then randomize before doing another sweep.
         fn selectPingTarget(self: *Self, allocator: std.mem.Allocator) !?*[]const u8 {
             while (true) {
@@ -550,8 +536,8 @@ pub fn Group() type {
                 if (pop) |v| return v;
 
                 block: {
-                    var hm = std.AutoHashMap(u64, *[]const u8).init(allocator);
-                    defer hm.deinit();
+                    var tl = std.ArrayList(*[]const u8).init(allocator);
+                    defer tl.deinit();
 
                     {
                         self.members_mtx.lock();
@@ -560,15 +546,14 @@ pub fn Group() type {
                         while (iter.next()) |v| {
                             if (v.value_ptr.state == .faulty) continue;
                             if (try self.keyIsMe(v.key_ptr)) continue;
-                            try hm.put(hm.count(), v.key_ptr);
+                            try tl.append(v.key_ptr);
                         }
                     }
 
-                    switch (hm.count()) {
+                    switch (tl.items.len) {
                         0 => return null, // probably just us
                         1 => {
-                            const get = hm.get(0);
-                            if (get) |v| try self.ping_queue.append(v);
+                            try self.ping_queue.append(tl.items[0]);
                             break :block;
                         },
                         else => {},
@@ -578,19 +563,18 @@ pub fn Group() type {
                     var prng = std.rand.DefaultPrng.init(seed);
                     const random = prng.random();
                     while (true) {
-                        switch (hm.count()) {
+                        switch (tl.items.len) {
                             0 => break,
                             1 => {
-                                const get = hm.get(0); // no need for random
-                                if (get) |v| try self.ping_queue.append(v);
+                                try self.ping_queue.append(tl.items[0]);
                                 break;
                             },
                             else => {},
                         }
 
-                        const rv = random.uintAtMost(u64, hm.count() - 1);
-                        const fr = hm.fetchRemove(rv);
-                        if (fr) |v| try self.ping_queue.append(v.value);
+                        const rv = random.uintAtMost(u64, tl.items.len - 1);
+                        try self.ping_queue.append(tl.items[rv]);
+                        _ = tl.swapRemove(rv);
                     }
                 }
             }
@@ -670,50 +654,11 @@ pub fn Group() type {
             try self.presetMessage(msg);
 
             msg.cmd = .ping;
-            const src_addr = try std.net.Address.resolveIp(self.ip, self.port);
-            msg.src_ip = src_addr.in.sa.addr;
-            msg.src_port = self.port;
-            msg.src_state = .alive;
+            var me = try std.fmt.allocPrint(arena.allocator(), "{s}:{d}", .{ self.ip, self.port });
+            const pme: *[]const u8 = &me;
+            try self.setMessageSection(msg, .src, .{ .key = pme, .state = .alive });
 
-            // Piggybacking on pings for our infection-style member/state dissemination.
-            if (isd) |isd_v| {
-                switch (isd_v.items.len) {
-                    1 => b: { // utilize the isd1_* section only
-                        const pop1 = isd_v.items[0];
-                        const sep1 = std.mem.indexOf(u8, pop1.key.*, ":") orelse break :b;
-                        const ip1 = pop1.key.*[0..sep1];
-                        const port1 = try std.fmt.parseUnsigned(u16, pop1.key.*[sep1 + 1 ..], 10);
-                        const addr1 = try std.net.Address.resolveIp(ip1, port1);
-                        msg.isd1_cmd = .infect;
-                        msg.isd1_ip = addr1.in.sa.addr;
-                        msg.isd1_port = port1;
-                        msg.isd1_state = pop1.state;
-                        msg.isd2_cmd = .noop; // don't use isd2_*
-                    },
-                    2 => b: { // utilize both isd1_* and isd2_* sections
-                        const pop1 = isd_v.items[0];
-                        const sep1 = std.mem.indexOf(u8, pop1.key.*, ":") orelse break :b;
-                        const ip1 = pop1.key.*[0..sep1];
-                        const port1 = try std.fmt.parseUnsigned(u16, pop1.key.*[sep1 + 1 ..], 10);
-                        const addr1 = try std.net.Address.resolveIp(ip1, port1);
-                        msg.isd1_cmd = .infect;
-                        msg.isd1_ip = addr1.in.sa.addr;
-                        msg.isd1_port = port1;
-                        msg.isd1_state = pop1.state;
-
-                        const pop2 = isd_v.items[1];
-                        const sep2 = std.mem.indexOf(u8, pop2.key.*, ":") orelse break :b;
-                        const ip2 = pop2.key.*[0..sep2];
-                        const port2 = try std.fmt.parseUnsigned(u16, pop2.key.*[sep2 + 1 ..], 10);
-                        const addr2 = try std.net.Address.resolveIp(ip2, port2);
-                        msg.isd2_cmd = .infect;
-                        msg.isd2_ip = addr2.in.sa.addr;
-                        msg.isd2_port = port2;
-                        msg.isd2_state = pop2.state;
-                    },
-                    else => {},
-                }
-            }
+            if (isd) |isd_v| try self.setIsdInfo(msg, isd_v); // piggyback isd
 
             try self.send(ip, port, buf);
 
@@ -728,6 +673,7 @@ pub fn Group() type {
             self: *Self,
             src: *[]const u8 = undefined, // agent
             dst: *[]const u8 = undefined, // target
+            isd: ?std.ArrayList(KeyState) = null,
             ack: bool = false,
         };
 
@@ -737,7 +683,7 @@ pub fn Group() type {
             var arena = std.heap.ArenaAllocator.init(args.self.allocator);
             defer arena.deinit(); // destroy arena in one go
 
-            var sep = std.mem.indexOf(u8, args.src.*, ":") orelse return;
+            const sep = std.mem.indexOf(u8, args.src.*, ":") orelse return;
             const ip = args.src.*[0..sep];
             const port = try std.fmt.parseUnsigned(u16, args.src.*[sep + 1 ..], 10);
 
@@ -746,19 +692,30 @@ pub fn Group() type {
             try args.self.presetMessage(msg);
             msg.cmd = .ping_req;
 
-            sep = std.mem.indexOf(u8, args.dst.*, ":") orelse return;
-            const dst_ip = args.dst.*[0..sep];
-            const dst_port = try std.fmt.parseUnsigned(u16, args.dst.*[sep + 1 ..], 10);
-            const dst_addr = try std.net.Address.resolveIp(dst_ip, dst_port);
-            msg.dst_ip = dst_addr.in.sa.addr;
-            msg.dst_port = dst_port;
+            // Use the src section for infection-style info dissemination.
+            var me = try std.fmt.allocPrint(
+                arena.allocator(),
+                "{s}:{d}",
+                .{ args.self.ip, args.self.port },
+            );
 
-            // TODO: Piggyback messages for our infection-style dissemination.
+            const pme: *[]const u8 = &me;
+            try args.self.setMessageSection(msg, .src, .{ .key = pme, .state = .alive });
+
+            // The dst_* section is the target of our ping.
+            try args.self.setMessageSection(msg, .dst, .{
+                .key = args.dst,
+                .state = .suspected, // will not be used
+            });
+
+            if (args.isd) |isd| try args.self.setIsdInfo(msg, isd); // piggyback isd
 
             args.self.send(ip, port, buf) catch |err| log.err("send failed: {any}", .{err});
 
             switch (msg.cmd) {
                 .ack => {
+                    // args.self.addOrSet(args.src, .alive);
+                    // TODO: Should we add dst as well?
                     log.debug("==> thread: got ack from {s}", .{args.src.*});
                     const ptr = &args.ack;
                     ptr.* = true;
@@ -812,6 +769,93 @@ pub fn Group() type {
             const ip = key.*[0..sep];
             const port = try std.fmt.parseUnsigned(u16, key.*[sep + 1 ..], 10);
             return if (std.mem.eql(u8, ip, self.ip) and port == self.port) true else false;
+        }
+
+        // Set default values for the message.
+        fn presetMessage(self: *Self, msg: *Message) !void {
+            msg.name = try std.fmt.parseUnsigned(u128, self.name, 0);
+            msg.cmd = .noop;
+            msg.src_state = .alive;
+            msg.dst_state = .alive;
+            msg.isd1_cmd = .noop;
+            msg.isd2_cmd = .noop;
+            msg.isd1_state = .alive;
+            msg.isd2_state = .alive;
+        }
+
+        const MessageSection = enum {
+            src,
+            dst,
+            isd1,
+            isd2,
+        };
+
+        // Set a section of the message payload with ip, port, and state info.
+        fn setMessageSection(
+            _: *Self,
+            msg: *Message,
+            section: MessageSection,
+            info: KeyState,
+        ) !void {
+            const sep = std.mem.indexOf(u8, info.key.*, ":") orelse return;
+            const ip = info.key.*[0..sep];
+            const port = try std.fmt.parseUnsigned(u16, info.key.*[sep + 1 ..], 10);
+            const addr = try std.net.Address.resolveIp(ip, port);
+
+            switch (section) {
+                .src => {
+                    msg.src_ip = addr.in.sa.addr;
+                    msg.src_port = port;
+                    msg.src_state = info.state;
+                },
+                .dst => {
+                    msg.dst_ip = addr.in.sa.addr;
+                    msg.dst_port = port;
+                    msg.dst_state = info.state;
+                },
+                .isd1 => {
+                    msg.isd1_ip = addr.in.sa.addr;
+                    msg.isd1_port = port;
+                    msg.isd1_state = info.state;
+                },
+                .isd2 => {
+                    msg.isd2_ip = addr.in.sa.addr;
+                    msg.isd2_port = port;
+                    msg.isd2_state = info.state;
+                },
+            }
+        }
+
+        // Set a section of the message payload with ISD info.
+        // ISD = Infection-style dissemination.
+        fn setIsdInfo(self: *Self, msg: *Message, isd: std.ArrayList(KeyState)) !void {
+            switch (isd.items.len) {
+                1 => b: { // utilize the isd1_* section only
+                    const pop1 = isd.items[0];
+                    msg.isd1_cmd = .infect;
+                    msg.isd2_cmd = .noop; // don't use isd2_*
+                    self.setMessageSection(msg, .isd1, .{
+                        .key = pop1.key,
+                        .state = pop1.state,
+                    }) catch break :b;
+                },
+                2 => b: { // utilize both isd1_* and isd2_* sections
+                    const pop1 = isd.items[0];
+                    msg.isd1_cmd = .infect;
+                    self.setMessageSection(msg, .isd1, .{
+                        .key = pop1.key,
+                        .state = pop1.state,
+                    }) catch break :b;
+
+                    const pop2 = isd.items[1];
+                    msg.isd2_cmd = .infect;
+                    self.setMessageSection(msg, .isd2, .{
+                        .key = pop2.key,
+                        .state = pop2.state,
+                    }) catch break :b;
+                },
+                else => {},
+            }
         }
 
         fn setMemberState(self: *Self, key: *[]const u8, state: MemberState) void {
