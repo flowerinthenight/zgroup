@@ -14,7 +14,7 @@ pub fn Group() type {
 
         /// SWIM protocol generic commands.
         pub const Command = enum(u8) {
-            dummy,
+            noop,
             ack,
             nack,
             join,
@@ -24,7 +24,7 @@ pub fn Group() type {
 
         /// Infection-style dissemination (ISD) commands.
         pub const IsdCommand = enum(u8) {
-            dummy,
+            noop,
             infect,
             suspect,
             confirm_alive,
@@ -545,9 +545,9 @@ pub fn Group() type {
         // Set default values for the message.
         fn presetMessage(self: *Self, msg: *Message) !void {
             msg.name = try std.fmt.parseUnsigned(u128, self.name, 0);
-            msg.cmd = .dummy;
-            msg.isd_src_cmd = .dummy;
-            msg.isd_dst_cmd = .dummy;
+            msg.cmd = .noop;
+            msg.isd_src_cmd = .noop;
+            msg.isd_dst_cmd = .noop;
             msg.src_state = .alive;
             msg.dst_state = .alive;
         }
@@ -640,7 +640,7 @@ pub fn Group() type {
                         msg.src_ip = addr.in.sa.addr;
                         msg.src_port = port0;
                         msg.src_state = pop0.state;
-                        msg.isd_dst_cmd = .dummy; // make dst_* invalid
+                        msg.isd_dst_cmd = .noop; // don't use dst_*
                     },
                     2 => b: { // utilize both src_* and dst_* sections
                         const pop0 = isd_v.items[0];
