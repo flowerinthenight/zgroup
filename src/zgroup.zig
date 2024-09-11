@@ -42,11 +42,11 @@ pub fn Group() type {
         pub const Message = packed struct {
             name: u128 = 0,
             cmd: Command = .nack,
-            isd_src_cmd: IsdCommand = .dummy,
+            isd_src_cmd: IsdCommand = .noop,
             src_ip: u32 = 0,
             src_port: u16 = 0,
             src_state: MemberState = .alive,
-            isd_dst_cmd: IsdCommand = .dummy,
+            isd_dst_cmd: IsdCommand = .noop,
             dst_ip: u32 = 0,
             dst_port: u16 = 0,
             dst_state: MemberState = .alive,
