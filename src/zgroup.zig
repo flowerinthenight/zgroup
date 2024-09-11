@@ -499,7 +499,7 @@ pub fn Group() type {
 
                                 var acks = false;
                                 for (ts.items) |v| acks = acks or v.ack;
-                                if (!acks) do_suspected = true;
+                                if (!acks) do_suspected = true else self.addOrSet(ping_key, .alive);
                             }
 
                             if (do_suspected) {
@@ -714,8 +714,7 @@ pub fn Group() type {
 
             switch (msg.cmd) {
                 .ack => {
-                    // args.self.addOrSet(args.src, .alive);
-                    // TODO: Should we add dst as well?
+                    args.self.addOrSet(args.src, .alive);
                     log.debug("==> thread: got ack from {s}", .{args.src.*});
                     const ptr = &args.ack;
                     ptr.* = true;
