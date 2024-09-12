@@ -16,7 +16,7 @@ pub const std_options = .{
 };
 
 const Args = struct {
-    args: []u8 = undefined,
+    args: []u8,
 };
 
 const pdata = struct {
@@ -89,7 +89,6 @@ pub fn main() !void {
     var member = hm.getEntry(2).?.value_ptr.args;
     var sep = std.mem.indexOf(u8, member, ":").?;
     var config = zgroup.Fleet().Config{ .name = name, .ip = member[0..sep] };
-    config.ip = member[0..sep];
     config.port = try std.fmt.parseUnsigned(u16, member[sep + 1 ..], 10);
 
     const join = hm.getEntry(3).?.value_ptr.args;
