@@ -331,11 +331,11 @@ pub fn Fleet() type {
                         msg.cmd = .nack;
                         if (msg.name == name) {
                             msg.cmd = .ack;
-                            const ipb = std.mem.asBytes(&msg.src_ip);
+                            const ips = std.mem.asBytes(&msg.src_ip);
                             const key = try std.fmt.allocPrint(
                                 self.allocator, // not arena
                                 "{d}.{d}.{d}.{d}:{d}",
-                                .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.src_port },
+                                .{ ips[0], ips[1], ips[2], ips[3], msg.src_port },
                             );
 
                             try self.addOrSet(key, .alive);
@@ -351,11 +351,11 @@ pub fn Fleet() type {
                     },
                     .ping_req => block: {
                         if (msg.name == name) {
-                            const dip = std.mem.asBytes(&msg.dst_ip);
+                            const ipd = std.mem.asBytes(&msg.dst_ip);
                             const dst = try std.fmt.allocPrint(
                                 arena.allocator(),
                                 "{d}.{d}.{d}.{d}:{d}",
-                                .{ dip[0], dip[1], dip[2], dip[3], msg.dst_port },
+                                .{ ipd[0], ipd[1], ipd[2], ipd[3], msg.dst_port },
                             );
 
                             log.debug("ping-req: requested to ping {s}", .{dst});
