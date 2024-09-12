@@ -410,11 +410,11 @@ pub fn Fleet() type {
                     self.members_mtx.lock();
                     defer self.members_mtx.unlock();
                     var it = self.members.iterator();
-                    while (it.next()) |entry| {
+                    while (it.next()) |v| {
                         log.debug("[{d}] members: key={s}, state={any}", .{
                             i,
-                            entry.key_ptr.*,
-                            entry.value_ptr.state,
+                            v.key_ptr.*,
+                            v.value_ptr.state,
                         });
                     }
                 }
@@ -721,8 +721,8 @@ pub fn Fleet() type {
             self.members_mtx.lock();
             defer self.members_mtx.unlock();
             var it = self.members.iterator();
-            while (it.next()) |entry| {
-                switch (entry.value_ptr.state) {
+            while (it.next()) |v| {
+                switch (v.value_ptr.state) {
                     .alive => n[0] += 1,
                     .suspected => n[1] += 1,
                     .faulty => n[2] += 1,
@@ -832,9 +832,9 @@ pub fn Fleet() type {
             self.members_mtx.lock();
             defer self.members_mtx.unlock();
             const ptr = self.members.getPtr(key.*);
-            if (ptr) |u| {
-                u.state = state;
-                if (u.state == .faulty) u.age_faulty.reset();
+            if (ptr) |v| {
+                v.state = state;
+                if (v.state == .faulty) v.age_faulty.reset();
             }
         }
 
@@ -872,21 +872,23 @@ pub fn Fleet() type {
             args.self.members_mtx.lock();
             defer args.self.members_mtx.unlock();
             const ptr = args.self.members.getPtr(args.key.*);
-            if (ptr) |u| {
-                if (u.state == .suspected) {
-                    u.state = .faulty;
-                    u.age_faulty.reset();
+            if (ptr) |v| {
+                if (v.state == .suspected) {
+                    v.state = .faulty;
+                    v.age_faulty.reset();
                 }
             }
         }
 
+        // Frees the memory used for `key` as well.
         fn removeMember(self: *Self, key: *[]const u8) void {
             self.members_mtx.lock();
             defer self.members_mtx.unlock();
             const fr = self.members.fetchRemove(key.*);
-            if (fr) |u| self.allocator.free(u.key);
+            if (fr) |v| self.allocator.free(v.key);
         }
 
+        // Attempt removing faulty members after some time.
         fn removeFaultyMembers(self: *Self) !void {
             var rml = std.ArrayList(*[]const u8).init(self.allocator);
             defer rml.deinit();
@@ -895,11 +897,11 @@ pub fn Fleet() type {
                 self.members_mtx.lock();
                 defer self.members_mtx.unlock();
                 var it = self.members.iterator();
-                const limit = std.time.ns_per_min * 10;
-                while (it.next()) |entry| {
-                    if (entry.value_ptr.state != .faulty) continue;
-                    if (entry.value_ptr.age_faulty.read() > limit) {
-                        try rml.append(entry.key_ptr);
+                const limit = std.time.ns_per_min * 10; // TODO: expose
+                while (it.next()) |v| {
+                    if (v.value_ptr.state != .faulty) continue;
+                    if (v.value_ptr.age_faulty.read() > limit) {
+                        try rml.append(v.key_ptr);
                     }
                 }
             }
