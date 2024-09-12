@@ -15,8 +15,8 @@ pub fn Fleet() type {
         allocator: std.mem.Allocator,
 
         // See Config comments for these fields.
-        name: []u8,
-        ip: []u8,
+        name: []const u8,
+        ip: []const u8,
         port: u16,
         protocol_time: u64,
         suspected_time: u64,
@@ -97,10 +97,10 @@ pub fn Fleet() type {
             /// it to `u128` for easy network sending than, say, a `[]u8`. Use init()
             /// to initialize.
             /// Example: "0xf47ac10b58cc4372a5670e02b2c3d479"
-            name: []u8,
+            name: []const u8,
 
             /// Member IP address for UDP, eg. "0.0.0.0". Use init() to initialize.
-            ip: []u8,
+            ip: []const u8,
 
             /// Member port number for UDP, eg. 8080.
             port: u16 = 8080,
