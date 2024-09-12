@@ -69,14 +69,14 @@ pub fn Group() type {
             /// We use the name as group identifier when groups are running over the
             /// same network. At the moment, we use the UUID format as we can cast
             /// it to `u128` for easy network sending than, say, a `[]u8`. Use init()
-            /// initialize.
+            /// to initialize.
             /// Example: "0xf47ac10b58cc4372a5670e02b2c3d479"
             name: []u8 = undefined,
 
             /// Member IP address for UDP, eg. "0.0.0.0". Use init() to initialize.
             ip: []u8 = undefined,
 
-            /// Member port number for UDP, eg. 8080. Use init() to initialize.
+            /// Member port number for UDP, eg. 8080.
             port: u16 = 8080,
 
             /// Our SWIM protocol timeout duration.
@@ -192,40 +192,20 @@ pub fn Group() type {
 
         allocator: std.mem.Allocator,
 
-        /// We use the name as group identifier when groups are running over the
-        /// same network. At the moment, we use the UUID format as we can cast
-        /// it to `u128` for easy network sending than, say, a `[]u8`. Use init()
-        /// initialize.
-        /// Example: "0xf47ac10b58cc4372a5670e02b2c3d479"
-        /// (Same comment as `Config`.)
+        // See Config comments for these fields.
         name: []u8,
-
-        /// Member IP address for UDP, eg. "0.0.0.0". Use init() to initialize.
-        /// (Same comment as `Config`.)
         ip: []u8,
-
-        /// Member port number for UDP, eg. 8080. Use init() to initialize.
-        /// (Same comment as `Config`.)
         port: u16,
-
-        /// Our SWIM protocol timeout duration.
-        /// (Same comment as `Config`.)
         protocol_time: u64,
-
-        /// Suspicion subprotocol timeout duration.
-        /// (Same comment as `Config`.)
         suspected_time: u64,
+        ping_req_k: u32,
 
         // Our per-member data. Key format is "ip:port", eg. "0.0.0.0:8080".
         members: std.StringHashMap(MemberData),
         members_mtx: std.Thread.Mutex = .{},
 
+        // Intermediate member queue for round-robin pings and randomization.
         ping_queue: std.ArrayList(*[]const u8),
-
-        /// Number of members we will request to do indirect pings for us
-        /// (agents). Valid value at the moment is `1`.
-        /// (Same comment as `Config`.)
-        ping_req_k: u32,
 
         // Internal: incarnation number for suspicion subprotocol.
         incarnation: u64 = 0,
@@ -237,6 +217,8 @@ pub fn Group() type {
             const name = try std.fmt.parseUnsigned(u128, self.name, 0);
             const buf = try self.allocator.alloc(u8, @sizeOf(Message));
             defer self.allocator.free(buf); // release buffer
+
+            const msg: *Message = @ptrCast(@alignCast(buf));
 
             const addr = try std.net.Address.resolveIp(self.ip, self.port);
             const sock = try std.posix.socket(
@@ -266,8 +248,6 @@ pub fn Group() type {
 
                 var arena = std.heap.ArenaAllocator.init(self.allocator);
                 defer arena.deinit();
-
-                const msg: *Message = @ptrCast(@alignCast(buf));
 
                 switch (msg.isd1_cmd) {
                     .infect => {
