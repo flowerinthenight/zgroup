@@ -235,7 +235,7 @@ pub fn Fleet() type {
             var src_addrlen: std.posix.socklen_t = @sizeOf(std.posix.sockaddr);
 
             while (true) {
-                _ = std.posix.recvfrom(
+                const len = std.posix.recvfrom(
                     sock,
                     buf,
                     0,
@@ -358,7 +358,7 @@ pub fn Fleet() type {
                                 .{ ipd[0], ipd[1], ipd[2], ipd[3], msg.dst_port },
                             );
 
-                            log.debug("ping-req: requested to ping {s}", .{dst});
+                            log.debug("({d}) ping-req: requested to ping {s}", .{ len, dst });
 
                             const ack = self.ping(dst, null) catch false;
                             msg.cmd = .nack;
