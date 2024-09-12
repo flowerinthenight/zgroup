@@ -8,9 +8,29 @@ const std = @import("std");
 
 const log = std.log.scoped(.zgroup);
 
-pub fn Group() type {
+pub fn Fleet() type {
     return struct {
         const Self = @This();
+
+        allocator: std.mem.Allocator,
+
+        // See Config comments for these fields.
+        name: []u8,
+        ip: []u8,
+        port: u16,
+        protocol_time: u64,
+        suspected_time: u64,
+        ping_req_k: u32,
+
+        // Our per-member data. Key format is "ip:port", eg. "0.0.0.0:8080".
+        members: std.StringHashMap(MemberData),
+        members_mtx: std.Thread.Mutex = .{},
+
+        // Intermediate member queue for round-robin pings and randomization.
+        ping_queue: std.ArrayList(*[]const u8),
+
+        // Internal: incarnation number for suspicion subprotocol.
+        incarnation: u64 = 0,
 
         /// SWIM protocol generic commands.
         pub const Command = enum(u8) {
@@ -62,6 +82,7 @@ pub fn Group() type {
         /// Per-member context data.
         pub const MemberData = struct {
             state: MemberState = .alive,
+            age_faulty: std.time.Timer = undefined,
         };
 
         /// Config for init().
@@ -126,8 +147,9 @@ pub fn Group() type {
 
         /// Start group membership tracking.
         pub fn run(self: *Self) !void {
-            const key = try std.fmt.allocPrint(self.allocator, "{s}:{d}", .{ self.ip, self.port });
-            try self.members.put(key, .{});
+            var key = try std.fmt.allocPrint(self.allocator, "{s}:{d}", .{ self.ip, self.port });
+            const pkey: *[]const u8 = &key;
+            try self.addOrSet(pkey, .alive);
 
             const server = try std.Thread.spawn(.{}, Self.listen, .{self});
             server.detach();
@@ -190,26 +212,6 @@ pub fn Group() type {
             state: MemberState,
         };
 
-        allocator: std.mem.Allocator,
-
-        // See Config comments for these fields.
-        name: []u8,
-        ip: []u8,
-        port: u16,
-        protocol_time: u64,
-        suspected_time: u64,
-        ping_req_k: u32,
-
-        // Our per-member data. Key format is "ip:port", eg. "0.0.0.0:8080".
-        members: std.StringHashMap(MemberData),
-        members_mtx: std.Thread.Mutex = .{},
-
-        // Intermediate member queue for round-robin pings and randomization.
-        ping_queue: std.ArrayList(*[]const u8),
-
-        // Internal: incarnation number for suspicion subprotocol.
-        incarnation: u64 = 0,
-
         // Run internal UDP server.
         fn listen(self: *Self) !void {
             log.info("Starting UDP server on :{d}...", .{self.port});
@@ -259,7 +261,7 @@ pub fn Group() type {
                         );
 
                         const pkey: *[]const u8 = &key;
-                        self.addOrSet(pkey, msg.isd1_state);
+                        try self.addOrSet(pkey, msg.isd1_state);
                     },
                     .suspect => {
                         // TODO:
@@ -282,7 +284,7 @@ pub fn Group() type {
                         );
 
                         const pkey: *[]const u8 = &key;
-                        self.addOrSet(pkey, msg.isd2_state);
+                        try self.addOrSet(pkey, msg.isd2_state);
                     },
                     .suspect => {
                         // TODO:
@@ -306,7 +308,7 @@ pub fn Group() type {
                             );
 
                             const pkey: *[]const u8 = &key;
-                            self.addOrSet(pkey, .alive);
+                            try self.addOrSet(pkey, .alive);
 
                             msg.cmd = .ack;
                             _ = std.posix.sendto(
@@ -341,7 +343,7 @@ pub fn Group() type {
                             );
 
                             const pkey: *[]const u8 = &key;
-                            self.addOrSet(pkey, .alive);
+                            try self.addOrSet(pkey, .alive);
                         }
 
                         _ = std.posix.sendto(
@@ -468,7 +470,9 @@ pub fn Group() type {
 
                                 var acks = false;
                                 for (ts.items) |v| acks = acks or v.ack;
-                                if (!acks) do_suspected = true else self.addOrSet(ping_key, .alive);
+                                if (!acks) do_suspected = true else {
+                                    try self.addOrSet(ping_key, .alive);
+                                }
                             }
 
                             if (do_suspected) {
@@ -479,7 +483,7 @@ pub fn Group() type {
                             }
                         },
                         else => {
-                            self.addOrSet(ping_key, .alive);
+                            try self.addOrSet(ping_key, .alive);
                             log.debug("[{d}] ack from {s}", .{ i, ping_key.* });
                         },
                     }
@@ -679,7 +683,7 @@ pub fn Group() type {
 
             switch (msg.cmd) {
                 .ack => {
-                    args.self.addOrSet(args.src, .alive);
+                    try args.self.addOrSet(args.src, .alive);
                     log.debug("[thread] got ack from {s}", .{args.src.*});
                     const ptr = &args.ack;
                     ptr.* = true;
@@ -826,11 +830,14 @@ pub fn Group() type {
             self.members_mtx.lock();
             defer self.members_mtx.unlock();
             const ptr = self.members.getPtr(key.*);
-            if (ptr) |u| u.state = state;
+            if (ptr) |u| {
+                u.state = state;
+                if (u.state == .faulty) u.age_faulty.reset();
+            }
         }
 
         // Add a new member or update an existing member's state.
-        fn addOrSet(self: *Self, key: *[]const u8, state: MemberState) void {
+        fn addOrSet(self: *Self, key: *[]const u8, state: MemberState) !void {
             const contains = b: {
                 self.members_mtx.lock();
                 defer self.members_mtx.unlock();
@@ -842,9 +849,14 @@ pub fn Group() type {
                 return;
             }
 
-            self.members_mtx.lock();
-            self.members.put(key.*, .{ .state = state }) catch {};
-            self.members_mtx.unlock();
+            {
+                self.members_mtx.lock();
+                defer self.members_mtx.unlock();
+                try self.members.put(key.*, .{
+                    .state = state,
+                    .age_faulty = try std.time.Timer.start(),
+                });
+            }
         }
 
         const SuspectToFaulty = struct {
@@ -859,7 +871,10 @@ pub fn Group() type {
             defer args.self.members_mtx.unlock();
             const ptr = args.self.members.getPtr(args.key.*);
             if (ptr) |u| {
-                if (u.state == .suspected) u.state = .faulty;
+                if (u.state == .suspected) {
+                    u.state = .faulty;
+                    u.age_faulty.reset();
+                }
             }
         }
 

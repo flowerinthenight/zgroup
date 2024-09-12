@@ -3,7 +3,7 @@ const builtin = std.builtin;
 const AtomicOrder = std.builtin.AtomicOrder;
 const AtomicRmwOp = std.builtin.AtomicRmwOp;
 const backoff = @import("zbackoff");
-const root = @import("zgroup.zig");
+const zgroup = @import("zgroup.zig");
 const dbg = std.debug.print;
 
 const log = std.log;
@@ -85,7 +85,7 @@ pub fn main() !void {
         log.info("{any}, {s}", .{ entry.key_ptr.*, entry.value_ptr.args });
     }
 
-    var config = root.Group().Config{ .name = hm.getEntry(1).?.value_ptr.args };
+    var config = zgroup.Fleet().Config{ .name = hm.getEntry(1).?.value_ptr.args };
     const member = hm.getEntry(2).?.value_ptr.args;
     var split = std.mem.indexOf(u8, member, ":").?;
     config.ip = member[0..split];
@@ -99,7 +99,7 @@ pub fn main() !void {
         join_port = try std.fmt.parseUnsigned(u16, join[split + 1 ..], 10);
     }
 
-    var grp = try root.Group().init(gpa.allocator(), &config);
+    var grp = try zgroup.Fleet().init(gpa.allocator(), &config);
     try grp.run();
     defer grp.deinit();
 
