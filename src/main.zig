@@ -86,9 +86,9 @@ pub fn main() !void {
     }
 
     const name = hm.getEntry(1).?.value_ptr.args;
-    var config = zgroup.Fleet().Config{ .name = name };
     var member = hm.getEntry(2).?.value_ptr.args;
     var sep = std.mem.indexOf(u8, member, ":").?;
+    var config = zgroup.Fleet().Config{ .name = name, .ip = member[0..sep] };
     config.ip = member[0..sep];
     config.port = try std.fmt.parseUnsigned(u16, member[sep + 1 ..], 10);
 
@@ -161,4 +161,12 @@ test "tuple" {
     dbg("{any}\n", .{tuple.len});
     tuple[0] = 200;
     dbg("{any}, {d}\n", .{ tuple.len, tuple[0] });
+}
+
+test "pstr" {
+    const name0 = try std.fmt.allocPrint(std.testing.allocator, "this is a name", .{});
+    defer std.testing.allocator.free(name0);
+    dbg("name0={s}, {any} {any}\n", .{ name0, name0.ptr, @TypeOf(name0) });
+    const name1 = name0;
+    dbg("name1={s}, {any} {any}\n", .{ name1, name1.ptr, @TypeOf(name1) });
 }
