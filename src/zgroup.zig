@@ -27,7 +27,7 @@ pub fn Fleet() type {
         members_mtx: std.Thread.Mutex = .{},
 
         // Intermediate member queue for round-robin pings and randomization.
-        ping_queue: std.ArrayList(*[]const u8),
+        ping_queue: std.ArrayList([]const u8),
 
         // Internal: incarnation number for suspicion subprotocol.
         incarnation: u64 = 0,
@@ -59,7 +59,7 @@ pub fn Fleet() type {
         };
 
         const KeyState = struct {
-            key: *[]const u8,
+            key: []const u8,
             state: MemberState,
         };
 
@@ -132,7 +132,7 @@ pub fn Fleet() type {
                 .suspected_time = config.suspected_time,
                 .ping_req_k = config.ping_req_k,
                 .members = std.StringHashMap(MemberData).init(allocator),
-                .ping_queue = std.ArrayList(*[]const u8).init(allocator),
+                .ping_queue = std.ArrayList([]const u8).init(allocator),
             };
         }
 
@@ -152,9 +152,8 @@ pub fn Fleet() type {
 
         /// Start group membership tracking.
         pub fn run(self: *Self) !void {
-            var key = try std.fmt.allocPrint(self.allocator, "{s}:{d}", .{ self.ip, self.port });
-            const pkey: *[]const u8 = &key;
-            try self.addOrSet(pkey, .alive);
+            const key = try std.fmt.allocPrint(self.allocator, "{s}:{d}", .{ self.ip, self.port });
+            try self.addOrSet(key, .alive);
 
             const server = try std.Thread.spawn(.{}, Self.listen, .{self});
             server.detach();
@@ -254,14 +253,13 @@ pub fn Fleet() type {
                 switch (msg.isd1_cmd) {
                     .infect => {
                         const ipb = std.mem.asBytes(&msg.isd1_ip);
-                        var key = try std.fmt.allocPrint(
+                        const key = try std.fmt.allocPrint(
                             self.allocator, // not arena
                             "{d}.{d}.{d}.{d}:{d}",
                             .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.isd1_port },
                         );
 
-                        const pkey: *[]const u8 = &key;
-                        try self.addOrSet(pkey, msg.isd1_state);
+                        try self.addOrSet(key, msg.isd1_state);
                     },
                     .suspect => {
                         // TODO:
@@ -277,14 +275,13 @@ pub fn Fleet() type {
                 switch (msg.isd2_cmd) {
                     .infect => {
                         const ipb = std.mem.asBytes(&msg.isd2_ip);
-                        var key = try std.fmt.allocPrint(
+                        const key = try std.fmt.allocPrint(
                             self.allocator, // not arena
                             "{d}.{d}.{d}.{d}:{d}",
                             .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.isd2_port },
                         );
 
-                        const pkey: *[]const u8 = &key;
-                        try self.addOrSet(pkey, msg.isd2_state);
+                        try self.addOrSet(key, msg.isd2_state);
                     },
                     .suspect => {
                         // TODO:
@@ -301,14 +298,13 @@ pub fn Fleet() type {
                     .join => block: {
                         if (msg.name == name) {
                             const ipb = std.mem.asBytes(&msg.src_ip);
-                            var key = try std.fmt.allocPrint(
+                            const key = try std.fmt.allocPrint(
                                 self.allocator, // not arena
                                 "{d}.{d}.{d}.{d}:{d}",
                                 .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.src_port },
                             );
 
-                            const pkey: *[]const u8 = &key;
-                            try self.addOrSet(pkey, .alive);
+                            try self.addOrSet(key, .alive);
 
                             msg.cmd = .ack;
                             _ = std.posix.sendto(
@@ -336,14 +332,13 @@ pub fn Fleet() type {
                         if (msg.name == name) {
                             msg.cmd = .ack;
                             const ipb = std.mem.asBytes(&msg.src_ip);
-                            var key = try std.fmt.allocPrint(
+                            const key = try std.fmt.allocPrint(
                                 self.allocator, // not arena
                                 "{d}.{d}.{d}.{d}:{d}",
                                 .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.src_port },
                             );
 
-                            const pkey: *[]const u8 = &key;
-                            try self.addOrSet(pkey, .alive);
+                            try self.addOrSet(key, .alive);
                         }
 
                         _ = std.posix.sendto(
@@ -357,7 +352,7 @@ pub fn Fleet() type {
                     .ping_req => block: {
                         if (msg.name == name) {
                             const dip = std.mem.asBytes(&msg.dst_ip);
-                            var dst = try std.fmt.allocPrint(
+                            const dst = try std.fmt.allocPrint(
                                 arena.allocator(),
                                 "{d}.{d}.{d}.{d}:{d}",
                                 .{ dip[0], dip[1], dip[2], dip[3], msg.dst_port },
@@ -365,8 +360,7 @@ pub fn Fleet() type {
 
                             log.debug("ping-req: requested to ping {s}", .{dst});
 
-                            const pdst: *[]const u8 = &dst;
-                            const ack = self.ping(pdst, null) catch false;
+                            const ack = self.ping(dst, null) catch false;
                             msg.cmd = .nack;
                             if (ack) msg.cmd = .ack;
 
@@ -422,7 +416,7 @@ pub fn Fleet() type {
                 try self.removeFaultyMembers();
 
                 var tm = try std.time.Timer.start();
-                var key_ptr: ?*[]const u8 = null;
+                var key_ptr: ?[]const u8 = null;
                 var isd: ?std.ArrayList(KeyState) = null;
 
                 const pt = try self.selectPingTarget(arena.allocator());
@@ -430,14 +424,14 @@ pub fn Fleet() type {
 
                 // Look for a random live non-faulty member(s) to broadcast.
                 if (key_ptr) |ping_key| {
-                    var excludes: [1]*[]const u8 = .{ping_key};
+                    var excludes: [1][]const u8 = .{ping_key};
                     isd = try self.pickRandomNonFaulty(arena.allocator(), &excludes, 2);
                 }
 
                 if (key_ptr) |ping_key| {
                     log.debug("[{d}] try pinging {s}, broadcast(s)={d}", .{
                         i,
-                        ping_key.*,
+                        ping_key,
                         if (isd) |v| v.items.len else 0,
                     });
 
@@ -445,7 +439,7 @@ pub fn Fleet() type {
                         false => {
                             // Let's do indirect ping for this suspicious node.
                             var do_suspected = false;
-                            var excludes: [1]*[]const u8 = .{ping_key};
+                            var excludes: [1][]const u8 = .{ping_key};
                             const agents = try self.pickRandomNonFaulty(
                                 arena.allocator(),
                                 &excludes,
@@ -486,7 +480,7 @@ pub fn Fleet() type {
                         },
                         else => {
                             try self.addOrSet(ping_key, .alive);
-                            log.debug("[{d}] ack from {s}", .{ i, ping_key.* });
+                            log.debug("[{d}] ack from {s}", .{ i, ping_key });
                         },
                     }
                 }
@@ -501,13 +495,13 @@ pub fn Fleet() type {
         }
 
         // Round-robin for one sweep, then randomize before doing another sweep.
-        fn selectPingTarget(self: *Self, allocator: std.mem.Allocator) !?*[]const u8 {
+        fn selectPingTarget(self: *Self, allocator: std.mem.Allocator) !?[]const u8 {
             while (true) {
                 const pop = self.ping_queue.popOrNull();
                 if (pop) |v| return v;
 
                 block: {
-                    var tl = std.ArrayList(*[]const u8).init(allocator);
+                    var tl = std.ArrayList([]const u8).init(allocator);
                     defer tl.deinit();
 
                     {
@@ -516,8 +510,8 @@ pub fn Fleet() type {
                         var iter = self.members.iterator();
                         while (iter.next()) |v| {
                             if (v.value_ptr.state == .faulty) continue;
-                            if (try self.keyIsMe(v.key_ptr)) continue;
-                            try tl.append(v.key_ptr);
+                            if (try self.keyIsMe(v.key_ptr.*)) continue;
+                            try tl.append(v.key_ptr.*);
                         }
                     }
 
@@ -558,7 +552,7 @@ pub fn Fleet() type {
         fn pickRandomNonFaulty(
             self: *Self,
             allocator: std.mem.Allocator, // arena
-            excludes: []*[]const u8,
+            excludes: [][]const u8,
             max: usize,
         ) !std.ArrayList(KeyState) {
             var out = std.ArrayList(KeyState).init(allocator);
@@ -571,15 +565,15 @@ pub fn Fleet() type {
                 var iter = self.members.iterator();
                 while (iter.next()) |v| {
                     if (v.value_ptr.state == .faulty) continue;
-                    if (try self.keyIsMe(v.key_ptr)) continue;
+                    if (try self.keyIsMe(v.key_ptr.*)) continue;
                     var eql: usize = 0;
                     for (excludes) |ex| {
-                        if (std.mem.eql(u8, ex.*, v.key_ptr.*)) eql += 1;
+                        if (std.mem.eql(u8, ex, v.key_ptr.*)) eql += 1;
                     }
 
                     if (eql > 0) continue;
                     try hm.put(hm.count(), .{
-                        .key = v.key_ptr,
+                        .key = v.key_ptr.*,
                         .state = v.value_ptr.state,
                     });
                 }
@@ -611,13 +605,13 @@ pub fn Fleet() type {
         }
 
         // Expected format for `key` is ip:port, eg. 0.0.0.0:8080.
-        fn ping(self: *Self, key: *[]const u8, isd: ?std.ArrayList(KeyState)) !bool {
+        fn ping(self: *Self, key: []const u8, isd: ?std.ArrayList(KeyState)) !bool {
             var arena = std.heap.ArenaAllocator.init(self.allocator);
             defer arena.deinit(); // destroy arena in one go
 
-            const sep = std.mem.indexOf(u8, key.*, ":") orelse return false;
-            const ip = key.*[0..sep];
-            const port = try std.fmt.parseUnsigned(u16, key.*[sep + 1 ..], 10);
+            const sep = std.mem.indexOf(u8, key, ":") orelse return false;
+            const ip = key[0..sep];
+            const port = try std.fmt.parseUnsigned(u16, key[sep + 1 ..], 10);
             if (std.mem.eql(u8, ip, self.ip) and port == self.port) return true;
 
             const buf = try arena.allocator().alloc(u8, @sizeOf(Message));
@@ -625,9 +619,8 @@ pub fn Fleet() type {
             try self.presetMessage(msg);
 
             msg.cmd = .ping;
-            var me = try std.fmt.allocPrint(arena.allocator(), "{s}:{d}", .{ self.ip, self.port });
-            const pme: *[]const u8 = &me;
-            try self.setMessageSection(msg, .src, .{ .key = pme, .state = .alive });
+            const me = try std.fmt.allocPrint(arena.allocator(), "{s}:{d}", .{ self.ip, self.port });
+            try self.setMessageSection(msg, .src, .{ .key = me, .state = .alive });
 
             if (isd) |isd_v| try self.setIsdInfo(msg, isd_v); // piggyback isd
 
@@ -642,21 +635,21 @@ pub fn Fleet() type {
         const IndirectPing = struct {
             thr: std.Thread = undefined,
             self: *Self,
-            src: *[]const u8 = undefined, // agent
-            dst: *[]const u8 = undefined, // target
+            src: []const u8, // agent
+            dst: []const u8, // target
             isd: ?std.ArrayList(KeyState) = null,
             ack: bool = false,
         };
 
         // To be run as a separate thread.
         fn indirectPing(args: *IndirectPing) !void {
-            log.debug("[thread] try pinging {s} via {s}", .{ args.dst.*, args.src.* });
+            log.debug("[thread] try pinging {s} via {s}", .{ args.dst, args.src });
             var arena = std.heap.ArenaAllocator.init(args.self.allocator);
             defer arena.deinit(); // destroy arena in one go
 
-            const sep = std.mem.indexOf(u8, args.src.*, ":") orelse return;
-            const ip = args.src.*[0..sep];
-            const port = try std.fmt.parseUnsigned(u16, args.src.*[sep + 1 ..], 10);
+            const sep = std.mem.indexOf(u8, args.src, ":") orelse return;
+            const ip = args.src[0..sep];
+            const port = try std.fmt.parseUnsigned(u16, args.src[sep + 1 ..], 10);
 
             const buf = try arena.allocator().alloc(u8, @sizeOf(Message));
             const msg: *Message = @ptrCast(@alignCast(buf));
@@ -664,14 +657,13 @@ pub fn Fleet() type {
             msg.cmd = .ping_req;
 
             // Use the src section for infection-style info dissemination.
-            var me = try std.fmt.allocPrint(
+            const me = try std.fmt.allocPrint(
                 arena.allocator(),
                 "{s}:{d}",
                 .{ args.self.ip, args.self.port },
             );
 
-            const pme: *[]const u8 = &me;
-            try args.self.setMessageSection(msg, .src, .{ .key = pme, .state = .alive });
+            try args.self.setMessageSection(msg, .src, .{ .key = me, .state = .alive });
 
             // The dst_* section is the target of our ping.
             try args.self.setMessageSection(msg, .dst, .{
@@ -686,7 +678,7 @@ pub fn Fleet() type {
             switch (msg.cmd) {
                 .ack => {
                     try args.self.addOrSet(args.src, .alive);
-                    log.debug("[thread] got ack from {s}", .{args.src.*});
+                    log.debug("[thread] got ack from {s}", .{args.src});
                     const ptr = &args.ack;
                     ptr.* = true;
                 },
@@ -734,10 +726,10 @@ pub fn Fleet() type {
         }
 
         // Expected format for `key` is ip:port, eg. 0.0.0.0:8080.
-        fn keyIsMe(self: *Self, key: *[]const u8) !bool {
-            const sep = std.mem.indexOf(u8, key.*, ":") orelse return false;
-            const ip = key.*[0..sep];
-            const port = try std.fmt.parseUnsigned(u16, key.*[sep + 1 ..], 10);
+        fn keyIsMe(self: *Self, key: []const u8) !bool {
+            const sep = std.mem.indexOf(u8, key, ":") orelse return false;
+            const ip = key[0..sep];
+            const port = try std.fmt.parseUnsigned(u16, key[sep + 1 ..], 10);
             return if (std.mem.eql(u8, ip, self.ip) and port == self.port) true else false;
         }
 
@@ -767,9 +759,9 @@ pub fn Fleet() type {
             section: MessageSection,
             info: KeyState,
         ) !void {
-            const sep = std.mem.indexOf(u8, info.key.*, ":") orelse return;
-            const ip = info.key.*[0..sep];
-            const port = try std.fmt.parseUnsigned(u16, info.key.*[sep + 1 ..], 10);
+            const sep = std.mem.indexOf(u8, info.key, ":") orelse return;
+            const ip = info.key[0..sep];
+            const port = try std.fmt.parseUnsigned(u16, info.key[sep + 1 ..], 10);
             const addr = try std.net.Address.resolveIp(ip, port);
 
             switch (section) {
@@ -828,10 +820,10 @@ pub fn Fleet() type {
             }
         }
 
-        fn setMemberState(self: *Self, key: *[]const u8, state: MemberState) void {
+        fn setMemberState(self: *Self, key: []const u8, state: MemberState) void {
             self.members_mtx.lock();
             defer self.members_mtx.unlock();
-            const ptr = self.members.getPtr(key.*);
+            const ptr = self.members.getPtr(key);
             if (ptr) |v| {
                 v.state = state;
                 if (v.state == .faulty) v.age_faulty.reset();
@@ -839,11 +831,11 @@ pub fn Fleet() type {
         }
 
         // Add a new member or update an existing member's state.
-        fn addOrSet(self: *Self, key: *[]const u8, state: MemberState) !void {
+        fn addOrSet(self: *Self, key: []const u8, state: MemberState) !void {
             const contains = b: {
                 self.members_mtx.lock();
                 defer self.members_mtx.unlock();
-                break :b self.members.contains(key.*);
+                break :b self.members.contains(key);
             };
 
             if (contains) {
@@ -854,7 +846,7 @@ pub fn Fleet() type {
             {
                 self.members_mtx.lock();
                 defer self.members_mtx.unlock();
-                try self.members.put(key.*, .{
+                try self.members.put(key, .{
                     .state = state,
                     .age_faulty = try std.time.Timer.start(),
                 });
@@ -863,7 +855,7 @@ pub fn Fleet() type {
 
         const SuspectToFaulty = struct {
             self: *Self,
-            key: *[]const u8,
+            key: []const u8,
         };
 
         // To be run as a separate thread.
@@ -871,7 +863,7 @@ pub fn Fleet() type {
             std.time.sleep(args.self.suspected_time);
             args.self.members_mtx.lock();
             defer args.self.members_mtx.unlock();
-            const ptr = args.self.members.getPtr(args.key.*);
+            const ptr = args.self.members.getPtr(args.key);
             if (ptr) |v| {
                 if (v.state == .suspected) {
                     v.state = .faulty;
@@ -881,16 +873,16 @@ pub fn Fleet() type {
         }
 
         // Frees the memory used for `key` as well.
-        fn removeMember(self: *Self, key: *[]const u8) void {
+        fn removeMember(self: *Self, key: []const u8) void {
             self.members_mtx.lock();
             defer self.members_mtx.unlock();
-            const fr = self.members.fetchRemove(key.*);
+            const fr = self.members.fetchRemove(key);
             if (fr) |v| self.allocator.free(v.key);
         }
 
         // Attempt removing faulty members after some time.
         fn removeFaultyMembers(self: *Self) !void {
-            var rml = std.ArrayList(*[]const u8).init(self.allocator);
+            var rml = std.ArrayList([]const u8).init(self.allocator);
             defer rml.deinit();
 
             {
@@ -901,7 +893,7 @@ pub fn Fleet() type {
                 while (it.next()) |v| {
                     if (v.value_ptr.state != .faulty) continue;
                     if (v.value_ptr.age_faulty.read() > limit) {
-                        try rml.append(v.key_ptr);
+                        try rml.append(v.key_ptr.*);
                     }
                 }
             }
