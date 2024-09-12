@@ -85,33 +85,34 @@ pub fn main() !void {
         log.info("{any}, {s}", .{ entry.key_ptr.*, entry.value_ptr.args });
     }
 
-    var config = zgroup.Fleet().Config{ .name = hm.getEntry(1).?.value_ptr.args };
-    const member = hm.getEntry(2).?.value_ptr.args;
-    var split = std.mem.indexOf(u8, member, ":").?;
-    config.ip = member[0..split];
-    config.port = try std.fmt.parseUnsigned(u16, member[split + 1 ..], 10);
+    const name = hm.getEntry(1).?.value_ptr.args;
+    var config = zgroup.Fleet().Config{ .name = name };
+    var member = hm.getEntry(2).?.value_ptr.args;
+    var sep = std.mem.indexOf(u8, member, ":").?;
+    config.ip = member[0..sep];
+    config.port = try std.fmt.parseUnsigned(u16, member[sep + 1 ..], 10);
 
     const join = hm.getEntry(3).?.value_ptr.args;
-    split = std.mem.indexOf(u8, join, ":").?;
-    const join_ip = join[0..split];
+    sep = std.mem.indexOf(u8, join, ":").?;
+    const join_ip = join[0..sep];
     var join_port: u16 = 0;
-    if (join[split + 1 ..].len > 0) {
-        join_port = try std.fmt.parseUnsigned(u16, join[split + 1 ..], 10);
+    if (join[sep + 1 ..].len > 0) {
+        join_port = try std.fmt.parseUnsigned(u16, join[sep + 1 ..], 10);
     }
 
-    var grp = try zgroup.Fleet().init(gpa.allocator(), &config);
-    try grp.run();
-    defer grp.deinit();
+    var fleet = try zgroup.Fleet().init(gpa.allocator(), &config);
+    try fleet.run();
+    defer fleet.deinit();
 
-    i = 0; // reuse
+    i = 0;
     var bo = backoff.Backoff{};
     while (true) : (i += 1) {
         std.time.sleep(std.time.ns_per_s * 1);
         if (i == 2 and join_ip.len > 0) {
             var joined = false;
             for (0..3) |_| {
-                try grp.join(
-                    hm.getEntry(1).?.value_ptr.args,
+                try fleet.join(
+                    name,
                     config.ip,
                     config.port,
                     join_ip,
