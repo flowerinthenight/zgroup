@@ -58,6 +58,11 @@ pub fn Fleet() type {
             faulty,
         };
 
+        const KeyState = struct {
+            key: *[]const u8,
+            state: MemberState,
+        };
+
         /// Our generic UDP comms/protocol payload.
         pub const Message = packed struct {
             name: u128 = 0,
@@ -206,11 +211,6 @@ pub fn Fleet() type {
                 else => {},
             }
         }
-
-        const KeyState = struct {
-            key: *[]const u8,
-            state: MemberState,
-        };
 
         // Run internal UDP server.
         fn listen(self: *Self) !void {
@@ -418,6 +418,8 @@ pub fn Fleet() type {
                         });
                     }
                 }
+
+                try self.removeFaultyMembers();
 
                 var tm = try std.time.Timer.start();
                 var key_ptr: ?*[]const u8 = null;
@@ -883,6 +885,26 @@ pub fn Fleet() type {
             defer self.members_mtx.unlock();
             const fr = self.members.fetchRemove(key.*);
             if (fr) |u| self.allocator.free(u.key);
+        }
+
+        fn removeFaultyMembers(self: *Self) !void {
+            var rml = std.ArrayList(*[]const u8).init(self.allocator);
+            defer rml.deinit();
+
+            {
+                self.members_mtx.lock();
+                defer self.members_mtx.unlock();
+                var it = self.members.iterator();
+                const limit = std.time.ns_per_min * 10;
+                while (it.next()) |entry| {
+                    if (entry.value_ptr.state != .faulty) continue;
+                    if (entry.value_ptr.age_faulty.read() > limit) {
+                        try rml.append(entry.key_ptr);
+                    }
+                }
+            }
+
+            for (rml.items) |v| self.removeMember(v);
         }
     };
 }
