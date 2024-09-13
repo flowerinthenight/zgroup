@@ -211,7 +211,7 @@ pub fn Fleet() type {
             }
         }
 
-        // Run internal UDP server.
+        // Run internal UDP server for comms.
         fn listen(self: *Self) !void {
             log.info("Starting UDP server on :{d}...", .{self.port});
 
@@ -547,8 +547,9 @@ pub fn Fleet() type {
             unreachable;
         }
 
-        // Pick random ping target excluding `excludes` and ourselves. The return ArrayList
-        // will be owned by the caller and is expected to be freed outside of this function.
+        // Pick random ping target excluding `excludes` and ourselves.
+        // The return ArrayList will be owned by the caller and is
+        // expected to be freed outside of this function.
         fn pickRandomNonFaulty(
             self: *Self,
             allocator: std.mem.Allocator, // arena
@@ -604,7 +605,7 @@ pub fn Fleet() type {
             return out;
         }
 
-        // Expected format for `key` is ip:port, eg. 0.0.0.0:8080.
+        // Ping a peer for liveness. Expected format for `key` is ip:port, eg. 0.0.0.0:8080.
         fn ping(self: *Self, key: []const u8, isd: ?std.ArrayList(KeyState)) !bool {
             var arena = std.heap.ArenaAllocator.init(self.allocator);
             defer arena.deinit(); // destroy arena in one go
@@ -641,7 +642,8 @@ pub fn Fleet() type {
             ack: bool = false,
         };
 
-        // To be run as a separate thread.
+        // To be run as a separate thread. Ask somebody else to do an indirect ping
+        // for us, piggybacking on some of the messages we need to propagate.
         fn indirectPing(args: *IndirectPing) !void {
             log.debug("[thread] try pinging {s} via {s}", .{ args.dst, args.src });
             var arena = std.heap.ArenaAllocator.init(args.self.allocator);
@@ -858,7 +860,8 @@ pub fn Fleet() type {
             key: []const u8,
         };
 
-        // To be run as a separate thread.
+        // To be run as a separate thread. Keep it suspected
+        // for a while before marking it as faulty.
         fn suspectToFaulty(args: *SuspectToFaulty) !void {
             std.time.sleep(args.self.suspected_time);
             args.self.members_mtx.lock();
@@ -870,14 +873,6 @@ pub fn Fleet() type {
                     v.age_faulty.reset();
                 }
             }
-        }
-
-        // Frees the memory used for `key` as well.
-        fn removeMember(self: *Self, key: []const u8) void {
-            self.members_mtx.lock();
-            defer self.members_mtx.unlock();
-            const fr = self.members.fetchRemove(key);
-            if (fr) |v| self.allocator.free(v.key);
         }
 
         // Attempt removing faulty members after some time.
@@ -899,6 +894,14 @@ pub fn Fleet() type {
             }
 
             for (rml.items) |v| self.removeMember(v);
+        }
+
+        // Frees the memory used for `key` as well.
+        fn removeMember(self: *Self, key: []const u8) void {
+            self.members_mtx.lock();
+            defer self.members_mtx.unlock();
+            const fr = self.members.fetchRemove(key);
+            if (fr) |v| self.allocator.free(v.key);
         }
     };
 }
