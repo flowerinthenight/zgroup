@@ -112,8 +112,6 @@ pub fn main() !void {
             for (0..3) |_| {
                 try fleet.join(
                     name,
-                    config.ip,
-                    config.port,
                     join_ip,
                     join_port,
                     &joined,
@@ -162,10 +160,14 @@ test "tuple" {
     dbg("{any}, {d}\n", .{ tuple.len, tuple[0] });
 }
 
-test "pstr" {
-    const name0 = try std.fmt.allocPrint(std.testing.allocator, "this is a name", .{});
-    defer std.testing.allocator.free(name0);
-    dbg("name0={s}, {any} {any}\n", .{ name0, name0.ptr, @TypeOf(name0) });
-    const name1 = name0;
-    dbg("name1={s}, {any} {any}\n", .{ name1, name1.ptr, @TypeOf(name1) });
+test "dupe" {
+    const alloc = std.testing.allocator;
+    const m1 = try std.fmt.allocPrint(alloc, "zig is the man", .{});
+    defer alloc.free(m1);
+    const dup1 = try alloc.dupe(u8, m1);
+    defer alloc.free(dup1);
+    const dup2 = try alloc.dupe(u8, m1);
+    defer alloc.free(dup2);
+    dbg("{s},{d}\n", .{ dup1, dup1.len });
+    dbg("{s},{d}\n", .{ dup2, dup2.len });
 }

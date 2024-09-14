@@ -5,6 +5,8 @@
 //!   Ref: https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf
 //!
 const std = @import("std");
+const AtomicOrder = std.builtin.AtomicOrder;
+const AtomicRmwOp = std.builtin.AtomicRmwOp;
 
 const log = std.log.scoped(.zgroup);
 
@@ -58,9 +60,10 @@ pub fn Fleet() type {
             faulty,
         };
 
-        const KeyState = struct {
+        const KeyInfo = struct {
             key: []const u8,
             state: MemberState,
+            incarnation: u64,
         };
 
         /// Our generic UDP comms/protocol payload.
@@ -70,24 +73,28 @@ pub fn Fleet() type {
             src_ip: u32 = 0,
             src_port: u16 = 0,
             src_state: MemberState = .alive,
+            src_incarnation: u64 = 0,
             dst_ip: u32 = 0,
             dst_port: u16 = 0,
             dst_state: MemberState = .alive,
+            dst_incarnation: u64 = 0,
             isd1_cmd: IsdCommand = .noop,
             isd1_ip: u32 = 0,
             isd1_port: u16 = 0,
             isd1_state: MemberState = .alive,
+            isd1_incarnation: u64 = 0,
             isd2_cmd: IsdCommand = .noop,
             isd2_ip: u32 = 0,
             isd2_port: u16 = 0,
             isd2_state: MemberState = .alive,
-            incarnation: u64 = 0,
+            isd2_incarnation: u64 = 0,
         };
 
         /// Per-member context data.
         pub const MemberData = struct {
             state: MemberState = .alive,
             age_faulty: std.time.Timer = undefined,
+            incarnation: u64 = 0,
         };
 
         /// Config for init().
@@ -152,8 +159,16 @@ pub fn Fleet() type {
 
         /// Start group membership tracking.
         pub fn run(self: *Self) !void {
-            const key = try std.fmt.allocPrint(self.allocator, "{s}:{d}", .{ self.ip, self.port });
-            try self.addOrSet(key, .alive);
+            var arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer arena.deinit(); // destroy arena in one go
+
+            const key = try std.fmt.allocPrint(
+                arena.allocator(),
+                "{s}:{d}",
+                .{ self.ip, self.port },
+            );
+
+            try self.addOrSet(key, .alive, 0);
 
             const server = try std.Thread.spawn(.{}, Self.listen, .{self});
             server.detach();
@@ -166,8 +181,6 @@ pub fn Fleet() type {
         pub fn join(
             self: *Self,
             name: []const u8,
-            src_ip: []const u8,
-            src_port: u16,
             dst_ip: []const u8,
             dst_port: u16,
             joined: *bool,
@@ -179,14 +192,10 @@ pub fn Fleet() type {
 
             const buf = try arena.allocator().alloc(u8, @sizeOf(Message));
             const msg: *Message = @ptrCast(@alignCast(buf));
+
             try self.presetMessage(msg);
             msg.cmd = .join;
-            const src_addr = try std.net.Address.resolveIp(src_ip, src_port);
-            const dst_addr = try std.net.Address.resolveIp(dst_ip, dst_port);
-            msg.src_ip = src_addr.in.sa.addr;
-            msg.src_port = src_port;
-            msg.dst_ip = dst_addr.in.sa.addr;
-            msg.dst_port = dst_port;
+            try self.setMsgSrcToOwn(arena.allocator(), msg);
 
             try self.send(dst_ip, dst_port, buf);
 
@@ -194,16 +203,13 @@ pub fn Fleet() type {
                 .ack => {
                     const sname = try std.fmt.parseUnsigned(u128, self.name, 0);
                     if (sname == msg.name) {
-                        const ipb = std.mem.asBytes(&msg.dst_ip);
                         const key = try std.fmt.allocPrint(
-                            self.allocator, // not arena
-                            "{d}.{d}.{d}.{d}:{d}",
-                            .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.dst_port },
+                            arena.allocator(),
+                            "{s}:{d}",
+                            .{ dst_ip, dst_port },
                         );
 
-                        self.members_mtx.lock();
-                        self.members.put(key, .{}) catch {};
-                        self.members_mtx.unlock();
+                        try self.addOrSet(key, .alive, 0);
                         joined.* = true;
                     }
                 },
@@ -219,6 +225,7 @@ pub fn Fleet() type {
             const buf = try self.allocator.alloc(u8, @sizeOf(Message));
             defer self.allocator.free(buf); // release buffer
 
+            // One allocation for the duration of this function.
             const msg: *Message = @ptrCast(@alignCast(buf));
 
             const addr = try std.net.Address.resolveIp(self.ip, self.port);
@@ -254,12 +261,12 @@ pub fn Fleet() type {
                     .infect => {
                         const ipb = std.mem.asBytes(&msg.isd1_ip);
                         const key = try std.fmt.allocPrint(
-                            self.allocator, // not arena
+                            arena.allocator(),
                             "{d}.{d}.{d}.{d}:{d}",
                             .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.isd1_port },
                         );
 
-                        try self.addOrSet(key, msg.isd1_state);
+                        try self.addOrSet(key, msg.isd1_state, msg.isd1_incarnation);
                     },
                     .suspect => {
                         // TODO:
@@ -276,12 +283,12 @@ pub fn Fleet() type {
                     .infect => {
                         const ipb = std.mem.asBytes(&msg.isd2_ip);
                         const key = try std.fmt.allocPrint(
-                            self.allocator, // not arena
+                            arena.allocator(),
                             "{d}.{d}.{d}.{d}:{d}",
                             .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.isd2_port },
                         );
 
-                        try self.addOrSet(key, msg.isd2_state);
+                        try self.addOrSet(key, msg.isd2_state, msg.isd2_incarnation);
                     },
                     .suspect => {
                         // TODO:
@@ -299,12 +306,14 @@ pub fn Fleet() type {
                         if (msg.name == name) {
                             const ipb = std.mem.asBytes(&msg.src_ip);
                             const key = try std.fmt.allocPrint(
-                                self.allocator, // not arena
+                                arena.allocator(),
                                 "{d}.{d}.{d}.{d}:{d}",
                                 .{ ipb[0], ipb[1], ipb[2], ipb[3], msg.src_port },
                             );
 
-                            try self.addOrSet(key, .alive);
+                            try self.addOrSet(key, .alive, msg.src_incarnation);
+
+                            try self.setMsgSrcToOwn(arena.allocator(), msg);
 
                             msg.cmd = .ack;
                             _ = std.posix.sendto(
@@ -328,17 +337,24 @@ pub fn Fleet() type {
                         ) catch |err| log.err("sendto failed: {any}", .{err});
                     },
                     .ping => {
+                        // Payload information:
+                        // src_* : caller
+                        // dst_* : ???
+                        // isd1_*: ISD1 (already processed above)
+                        // isd2_*: ISD2 (already processed above)
                         msg.cmd = .nack;
                         if (msg.name == name) {
                             msg.cmd = .ack;
                             const ips = std.mem.asBytes(&msg.src_ip);
                             const key = try std.fmt.allocPrint(
-                                self.allocator, // not arena
+                                arena.allocator(),
                                 "{d}.{d}.{d}.{d}:{d}",
                                 .{ ips[0], ips[1], ips[2], ips[3], msg.src_port },
                             );
 
-                            try self.addOrSet(key, .alive);
+                            try self.addOrSet(key, .alive, msg.src_incarnation);
+
+                            try self.setMsgSrcToOwn(arena.allocator(), msg);
                         }
 
                         _ = std.posix.sendto(
@@ -350,7 +366,21 @@ pub fn Fleet() type {
                         ) catch |err| log.err("sendto failed: {any}", .{err});
                     },
                     .ping_req => block: {
+                        // Payload information:
+                        // src_* : caller/requester (we are the agent)
+                        // dst_* : target of the ping-request
+                        // isd1_*: ISD1 (already processed above)
+                        // isd2_*: ISD2 (already processed above)
                         if (msg.name == name) {
+                            const ips = std.mem.asBytes(&msg.src_ip);
+                            const src = try std.fmt.allocPrint(
+                                arena.allocator(),
+                                "{d}.{d}.{d}.{d}:{d}",
+                                .{ ips[0], ips[1], ips[2], ips[3], msg.src_port },
+                            );
+
+                            try self.addOrSet(src, .alive, msg.src_incarnation);
+
                             const ipd = std.mem.asBytes(&msg.dst_ip);
                             const dst = try std.fmt.allocPrint(
                                 arena.allocator(),
@@ -358,11 +388,28 @@ pub fn Fleet() type {
                                 .{ ipd[0], ipd[1], ipd[2], ipd[3], msg.dst_port },
                             );
 
-                            log.debug("({d}) ping-req: requested to ping {s}", .{ len, dst });
+                            // ISD info already processed above. We can reuse for ISD.
+                            var excludes: [0][]const u8 = .{};
+                            const isd = try self.pickRandomNonFaulty(
+                                arena.allocator(),
+                                &excludes,
+                                2,
+                            );
 
-                            const ack = self.ping(dst, null) catch false;
+                            log.debug("({d}) ping-req: requested to ping {s}, isd={d}", .{
+                                len,
+                                dst,
+                                isd.items.len,
+                            });
+
+                            // This ping will overwrite src_* with our data (from caller).
+                            const ack = self.ping(dst, isd) catch false;
+
                             msg.cmd = .nack;
-                            if (ack) msg.cmd = .ack;
+                            if (ack) {
+                                msg.cmd = .ack;
+                                try self.addOrSet(dst, .alive, msg.src_incarnation);
+                            }
 
                             _ = std.posix.sendto(
                                 sock,
@@ -417,7 +464,7 @@ pub fn Fleet() type {
 
                 var tm = try std.time.Timer.start();
                 var key_ptr: ?[]const u8 = null;
-                var isd: ?std.ArrayList(KeyState) = null;
+                var isd: ?std.ArrayList(KeyInfo) = null; // via arena
 
                 const pt = try self.selectPingTarget(arena.allocator());
                 if (pt) |v| key_ptr = v;
@@ -467,21 +514,18 @@ pub fn Fleet() type {
                                 var acks = false;
                                 for (ts.items) |v| acks = acks or v.ack;
                                 if (!acks) do_suspected = true else {
-                                    try self.addOrSet(ping_key, .alive);
+                                    try self.addOrSet(ping_key, .alive, null);
                                 }
                             }
 
                             if (do_suspected) {
-                                self.setMemberState(ping_key, .suspected);
+                                self.setMemberInfo(ping_key, .suspected, null);
                                 var sf = SuspectToFaulty{ .self = self, .key = ping_key };
                                 const t = try std.Thread.spawn(.{}, Self.suspectToFaulty, .{&sf});
                                 t.detach();
                             }
                         },
-                        else => {
-                            try self.addOrSet(ping_key, .alive);
-                            log.debug("[{d}] ack from {s}", .{ i, ping_key });
-                        },
+                        else => log.debug("[{d}] ack from {s}", .{ i, ping_key }),
                     }
                 }
 
@@ -555,9 +599,9 @@ pub fn Fleet() type {
             allocator: std.mem.Allocator, // arena
             excludes: [][]const u8,
             max: usize,
-        ) !std.ArrayList(KeyState) {
-            var out = std.ArrayList(KeyState).init(allocator);
-            var hm = std.AutoHashMap(u64, KeyState).init(allocator);
+        ) !std.ArrayList(KeyInfo) {
+            var out = std.ArrayList(KeyInfo).init(allocator);
+            var hm = std.AutoHashMap(u64, KeyInfo).init(allocator);
             defer hm.deinit(); // noop
 
             {
@@ -576,6 +620,7 @@ pub fn Fleet() type {
                     try hm.put(hm.count(), .{
                         .key = v.key_ptr.*,
                         .state = v.value_ptr.state,
+                        .incarnation = v.value_ptr.incarnation,
                     });
                 }
             }
@@ -584,7 +629,12 @@ pub fn Fleet() type {
             if (limit > hm.count()) limit = hm.count();
             if (hm.count() == 1 and limit > 0) {
                 const get = hm.get(0);
-                if (get) |v| try out.append(.{ .key = v.key, .state = v.state });
+                if (get) |v| try out.append(.{
+                    .key = v.key,
+                    .state = v.state,
+                    .incarnation = v.incarnation,
+                });
+
                 return out;
             }
 
@@ -597,7 +647,12 @@ pub fn Fleet() type {
                     if (hm.count() == 0) break;
                     const rv = random.uintAtMost(u64, hm.count() - 1);
                     const fr = hm.fetchRemove(rv);
-                    if (fr) |v| try out.append(.{ .key = v.value.key, .state = v.value.state });
+                    if (fr) |v| try out.append(.{
+                        .key = v.value.key,
+                        .state = v.value.state,
+                        .incarnation = v.value.incarnation,
+                    });
+
                     break;
                 }
             }
@@ -606,7 +661,8 @@ pub fn Fleet() type {
         }
 
         // Ping a peer for liveness. Expected format for `key` is ip:port, eg. 0.0.0.0:8080.
-        fn ping(self: *Self, key: []const u8, isd: ?std.ArrayList(KeyState)) !bool {
+        // For pings, we use the src_* payload fields to identify us, the sender.
+        fn ping(self: *Self, key: []const u8, isd: ?std.ArrayList(KeyInfo)) !bool {
             var arena = std.heap.ArenaAllocator.init(self.allocator);
             defer arena.deinit(); // destroy arena in one go
 
@@ -620,15 +676,17 @@ pub fn Fleet() type {
             try self.presetMessage(msg);
 
             msg.cmd = .ping;
-            const me = try std.fmt.allocPrint(arena.allocator(), "{s}:{d}", .{ self.ip, self.port });
-            try self.setMessageSection(msg, .src, .{ .key = me, .state = .alive });
+            try self.setMsgSrcToOwn(arena.allocator(), msg);
 
-            if (isd) |isd_v| try self.setIsdInfo(msg, isd_v); // piggyback isd
+            if (isd) |isd_v| try self.setIsdInfo(msg, isd_v); // piggyback ISD
 
             try self.send(ip, port, buf);
 
             return switch (msg.cmd) {
-                .ack => true,
+                .ack => b: {
+                    try self.addOrSet(key, .alive, msg.src_incarnation);
+                    break :b true;
+                },
                 else => false,
             };
         }
@@ -638,7 +696,7 @@ pub fn Fleet() type {
             self: *Self,
             src: []const u8, // agent
             dst: []const u8, // target
-            isd: ?std.ArrayList(KeyState) = null,
+            isd: ?std.ArrayList(KeyInfo) = null,
             ack: bool = false,
         };
 
@@ -658,19 +716,14 @@ pub fn Fleet() type {
             try args.self.presetMessage(msg);
             msg.cmd = .ping_req;
 
-            // Use the src section for infection-style info dissemination.
-            const me = try std.fmt.allocPrint(
-                arena.allocator(),
-                "{s}:{d}",
-                .{ args.self.ip, args.self.port },
-            );
-
-            try args.self.setMessageSection(msg, .src, .{ .key = me, .state = .alive });
+            // Set src_* to our info, the sender.
+            try args.self.setMsgSrcToOwn(arena.allocator(), msg);
 
             // The dst_* section is the target of our ping.
             try args.self.setMessageSection(msg, .dst, .{
                 .key = args.dst,
                 .state = .suspected, // will not be used
+                .incarnation = 0, // will not be used
             });
 
             if (args.isd) |isd| try args.self.setIsdInfo(msg, isd); // piggyback isd
@@ -679,8 +732,8 @@ pub fn Fleet() type {
 
             switch (msg.cmd) {
                 .ack => {
-                    try args.self.addOrSet(args.src, .alive);
                     log.debug("[thread] got ack from {s}", .{args.src});
+                    try args.self.addOrSet(args.src, .alive, null); // agent
                     const ptr = &args.ack;
                     ptr.* = true;
                 },
@@ -727,6 +780,20 @@ pub fn Fleet() type {
             return n;
         }
 
+        fn getIncarnation(self: *Self) u64 {
+            return @atomicLoad(u64, &self.incarnation, AtomicOrder.seq_cst);
+        }
+
+        fn IncrementIncarnation(self: *Self) void {
+            _ = @atomicRmw(
+                u64,
+                &self.incarnation,
+                AtomicRmwOp.Add,
+                1,
+                AtomicOrder.seq_cst,
+            );
+        }
+
         // Expected format for `key` is ip:port, eg. 0.0.0.0:8080.
         fn keyIsMe(self: *Self, key: []const u8) !bool {
             const sep = std.mem.indexOf(u8, key, ":") orelse return false;
@@ -759,7 +826,7 @@ pub fn Fleet() type {
             _: *Self,
             msg: *Message,
             section: MessageSection,
-            info: KeyState,
+            info: KeyInfo,
         ) !void {
             const sep = std.mem.indexOf(u8, info.key, ":") orelse return;
             const ip = info.key[0..sep];
@@ -771,28 +838,42 @@ pub fn Fleet() type {
                     msg.src_ip = addr.in.sa.addr;
                     msg.src_port = port;
                     msg.src_state = info.state;
+                    msg.src_incarnation = info.incarnation;
                 },
                 .dst => {
                     msg.dst_ip = addr.in.sa.addr;
                     msg.dst_port = port;
                     msg.dst_state = info.state;
+                    msg.dst_incarnation = info.incarnation;
                 },
                 .isd1 => {
                     msg.isd1_ip = addr.in.sa.addr;
                     msg.isd1_port = port;
                     msg.isd1_state = info.state;
+                    msg.isd1_incarnation = info.incarnation;
                 },
                 .isd2 => {
                     msg.isd2_ip = addr.in.sa.addr;
                     msg.isd2_port = port;
                     msg.isd2_state = info.state;
+                    msg.isd2_incarnation = info.incarnation;
                 },
             }
         }
 
+        // Convenience function.
+        fn setMsgSrcToOwn(self: *Self, allocator: std.mem.Allocator, msg: *Message) !void {
+            const me = try std.fmt.allocPrint(allocator, "{s}:{d}", .{ self.ip, self.port });
+            try self.setMessageSection(msg, .src, .{
+                .key = me,
+                .state = .alive,
+                .incarnation = self.getIncarnation(),
+            });
+        }
+
         // Set a section of the message payload with ISD info.
         // ISD = Infection-style dissemination.
-        fn setIsdInfo(self: *Self, msg: *Message, isd: std.ArrayList(KeyState)) !void {
+        fn setIsdInfo(self: *Self, msg: *Message, isd: std.ArrayList(KeyInfo)) !void {
             switch (isd.items.len) {
                 0 => return,
                 1 => b: { // utilize the isd1_* section only
@@ -802,6 +883,7 @@ pub fn Fleet() type {
                     self.setMessageSection(msg, .isd1, .{
                         .key = pop1.key,
                         .state = pop1.state,
+                        .incarnation = pop1.incarnation,
                     }) catch break :b;
                 },
                 else => b: { // utilize both isd1_* and isd2_* sections
@@ -810,6 +892,7 @@ pub fn Fleet() type {
                     self.setMessageSection(msg, .isd1, .{
                         .key = pop1.key,
                         .state = pop1.state,
+                        .incarnation = pop1.incarnation,
                     }) catch break :b;
 
                     const pop2 = isd.items[1];
@@ -817,23 +900,26 @@ pub fn Fleet() type {
                     self.setMessageSection(msg, .isd2, .{
                         .key = pop2.key,
                         .state = pop2.state,
+                        .incarnation = pop2.incarnation,
                     }) catch break :b;
                 },
             }
         }
 
-        fn setMemberState(self: *Self, key: []const u8, state: MemberState) void {
+        fn setMemberInfo(self: *Self, key: []const u8, state: MemberState, incarnation: ?u64) void {
             self.members_mtx.lock();
             defer self.members_mtx.unlock();
             const ptr = self.members.getPtr(key);
             if (ptr) |v| {
                 v.state = state;
                 if (v.state == .faulty) v.age_faulty.reset();
+                if (incarnation) |inc| v.incarnation = inc;
             }
         }
 
-        // Add a new member or update an existing member's state.
-        fn addOrSet(self: *Self, key: []const u8, state: MemberState) !void {
+        // Add a new member or update an existing member's info. This function duplicates the key
+        // using self.allocator when adding a new member, not when updating an existing one.
+        fn addOrSet(self: *Self, key: []const u8, state: MemberState, incarnation: ?u64) !void {
             const contains = b: {
                 self.members_mtx.lock();
                 defer self.members_mtx.unlock();
@@ -841,14 +927,15 @@ pub fn Fleet() type {
             };
 
             if (contains) {
-                self.setMemberState(key, state);
+                self.setMemberInfo(key, state, incarnation);
                 return;
             }
 
             {
+                const nkey = try self.allocator.dupe(u8, key);
                 self.members_mtx.lock();
                 defer self.members_mtx.unlock();
-                try self.members.put(key, .{
+                try self.members.put(nkey, .{
                     .state = state,
                     .age_faulty = try std.time.Timer.start(),
                 });
