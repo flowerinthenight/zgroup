@@ -289,7 +289,6 @@ pub fn Fleet() type {
 
                         if (try self.keyIsMe(key)) {
                             self.IncrementIncarnation();
-                            log.debug(">>>>> 1:we are suspected, inc++", .{});
 
                             {
                                 self.isd_mtx.lock();
@@ -505,11 +504,13 @@ pub fn Fleet() type {
                     defer self.members_mtx.unlock();
                     var it = self.members.iterator();
                     while (it.next()) |v| {
+                        var inc = v.value_ptr.incarnation;
+                        if (try self.keyIsMe(v.key_ptr.*)) inc = self.getIncarnation();
                         log.debug("[{d}] members: key={s}, state={any}, inc={d}", .{
                             i,
                             v.key_ptr.*,
                             v.value_ptr.state,
-                            v.value_ptr.incarnation,
+                            inc,
                         });
                     }
                 }
