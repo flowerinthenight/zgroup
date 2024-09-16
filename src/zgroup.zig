@@ -560,6 +560,7 @@ pub fn Fleet() type {
         }
 
         // Round-robin for one sweep, then randomize before doing another sweep.
+        // We are passing in an arena allocator here.
         fn getPingTarget(self: *Self, allocator: std.mem.Allocator) !?[]const u8 {
             while (true) {
                 const pop = self.ping_queue.popOrNull();
@@ -613,9 +614,10 @@ pub fn Fleet() type {
         }
 
         // Caller is responsible for releasing the returned memory.
+        // We are passing in an arena allocator here.
         fn getRandomMember(
             self: *Self,
-            allocator: std.mem.Allocator, // arena
+            allocator: std.mem.Allocator,
             excludes: [][]const u8,
             max: usize,
         ) !std.ArrayList(KeyInfo) {
@@ -681,6 +683,7 @@ pub fn Fleet() type {
         }
 
         // Caller is responsible for releasing the returned memory.
+        // We are passing in an arena allocator here.
         fn getIsdInfo(
             self: *Self,
             allocator: std.mem.Allocator,
@@ -698,6 +701,8 @@ pub fn Fleet() type {
             return out;
         }
 
+        // Setup both dst_* and isd_* sections of the payload.
+        // We are passing in an arena allocator here.
         fn setDstAndIsd(
             self: *Self,
             allocator: std.mem.Allocator,
@@ -861,6 +866,7 @@ pub fn Fleet() type {
         }
 
         // Handle the isd_* section of the message payload.
+        // We are passing in an arena allocator here.
         fn handleSuspicion(self: *Self, allocator: std.mem.Allocator, msg: *Message) !void {
             const key = try keyFromIpPort(allocator, msg.isd_ip, msg.isd_port);
             if (self.keyIsMe(key)) {
