@@ -108,14 +108,14 @@ pub fn main() !void {
     while (true) : (i += 1) {
         std.time.sleep(std.time.ns_per_s * 1);
         if (i == 2 and join_ip.len > 0) {
-            var joined = false;
             for (0..3) |_| {
-                try fleet.join(
+                var joined = false;
+                fleet.join(
                     name,
                     join_ip,
                     join_port,
                     &joined,
-                );
+                ) catch |err| log.err("join failed: {any}", .{err});
 
                 if (joined) break else std.time.sleep(bo.pause());
             }
