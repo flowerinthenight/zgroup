@@ -170,8 +170,9 @@ pub fn Fleet() type {
             ticker.detach();
         }
 
-        /// Ask an instance to join an existing group. `joined` will be set to true if
-        /// joining is successful. `src_*` is the caller, joining through `dst_*`.
+        /// Ask an instance to join an existing group. `joined` will be
+        /// set to true if joining is successful. We are joining the
+        /// group through `dst_*`.
         pub fn join(
             self: *Self,
             name: []const u8,
@@ -179,7 +180,11 @@ pub fn Fleet() type {
             dst_port: u16,
             joined: *bool,
         ) !void {
-            log.info("joining via {s}:{any}, name={s}...", .{ dst_ip, dst_port, name });
+            log.info("joining via {s}:{any}, name={s}...", .{
+                dst_ip,
+                dst_port,
+                name,
+            });
 
             var parent = std.heap.ArenaAllocator.init(self.allocator);
             defer parent.deinit(); // destroy arena in one go
@@ -198,7 +203,11 @@ pub fn Fleet() type {
                 .ack => {
                     const sname = try std.fmt.parseUnsigned(u128, self.name, 0);
                     if (sname == msg.name) {
-                        const key = try std.fmt.allocPrint(arena, "{s}:{d}", .{ dst_ip, dst_port });
+                        const key = try std.fmt.allocPrint(arena, "{s}:{d}", .{
+                            dst_ip,
+                            dst_port,
+                        });
+
                         try self.addOrSet(key, .alive, 0);
                         joined.* = true;
                     }
@@ -245,13 +254,6 @@ pub fn Fleet() type {
                     continue;
                 };
 
-                // Test only, remove:
-                // if (self.port == 8081 and (i == 15 or i == 16)) {
-                //     std.time.sleep(std.time.ns_per_s * 10);
-                //     log.debug("8082:trigger hiccup test...", .{});
-                //     continue;
-                // }
-
                 var parent = std.heap.ArenaAllocator.init(self.allocator);
                 defer parent.deinit(); // destroy arena in one go
                 const arena = parent.allocator();
@@ -261,25 +263,7 @@ pub fn Fleet() type {
                         const key = try keyFromIpPort(arena, msg.isd_ip, msg.isd_port);
                         try self.setMemberInfo(key, msg.isd_state, msg.isd_incarnation);
                     },
-                    .suspect => {
-                        const key = try keyFromIpPort(arena, msg.isd_ip, msg.isd_port);
-                        if (self.keyIsMe(key)) {
-                            try self.IncrementIncarnation();
-
-                            log.debug(">>>>> dbg: we are suspected!", .{});
-
-                            {
-                                self.isd_mtx.lock();
-                                defer self.isd_mtx.unlock();
-                                try self.isd_queue.append(.{
-                                    .key = key,
-                                    .state = .alive,
-                                    .isd_cmd = .confirm_alive,
-                                    .incarnation = try self.getIncarnation(),
-                                });
-                            }
-                        } else try self.setMemberInfo(key, .suspected, msg.isd_incarnation);
-                    },
+                    .suspect => try self.handleSuspicion(arena, msg),
                     .confirm_alive => {
                         log.debug(">>>>> todo: confirm alive, inc={d}", .{msg.isd_incarnation});
                     },
@@ -345,7 +329,7 @@ pub fn Fleet() type {
 
                             // Use both dst_* and isd_* for ISD info.
                             var excludes: [1][]const u8 = .{src};
-                            try self.setupDstAndIsd(arena, msg, &excludes);
+                            try self.setDstAndIsd(arena, msg, &excludes);
                         }
 
                         _ = std.posix.sendto(
@@ -377,7 +361,7 @@ pub fn Fleet() type {
 
                             // Use both dst_* and isd_* for ISD info.
                             var excludes: [1][]const u8 = .{dst};
-                            try self.setupDstAndIsd(arena, msg, &excludes);
+                            try self.setDstAndIsd(arena, msg, &excludes);
 
                             const ack = self.ping(dst) catch false;
 
@@ -546,7 +530,23 @@ pub fn Fleet() type {
                                 t.detach();
                             }
                         },
-                        else => log.debug("[{d}] ack from {s}", .{ i, ping_key }),
+                        else => {
+                            log.debug("[{d}] ack from {s}", .{ i, ping_key });
+
+                            // TEST: start
+                            if (i == 10) {
+                                log.debug("[{d}] --- trigger suspect for {s}", .{ i, ping_key });
+                                self.isd_mtx.lock();
+                                defer self.isd_mtx.unlock();
+                                try self.isd_queue.append(.{
+                                    .key = ping_key,
+                                    .state = .suspected,
+                                    .incarnation = 0,
+                                    .isd_cmd = .suspect,
+                                });
+                            }
+                            // TEST: end
+                        },
                     }
                 }
 
@@ -698,7 +698,7 @@ pub fn Fleet() type {
             return out;
         }
 
-        fn setupDstAndIsd(
+        fn setDstAndIsd(
             self: *Self,
             allocator: std.mem.Allocator,
             msg: *Message,
@@ -713,7 +713,7 @@ pub fn Fleet() type {
             // Setup main ISD info.
             const isd = try self.getIsdInfo(allocator, 1);
             if (isd.items.len > 0) {
-                msg.isd_cmd = .infect;
+                msg.isd_cmd = isd.items[0].isd_cmd;
                 try setMsgSection(msg, .isd, isd.items[0]);
             }
         }
@@ -740,7 +740,7 @@ pub fn Fleet() type {
 
             // Use both dst_* and isd_* for ISD info.
             var excludes: [1][]const u8 = .{key};
-            try self.setupDstAndIsd(arena, msg, &excludes);
+            try self.setDstAndIsd(arena, msg, &excludes);
 
             try self.send(ip, port, buf);
 
@@ -760,6 +760,9 @@ pub fn Fleet() type {
                             const k = try keyFromIpPort(arena, msg.isd_ip, msg.isd_port);
                             try self.addOrSet(k, msg.isd_state, msg.isd_incarnation);
                         },
+                        .suspect => try self.handleSuspicion(arena, msg),
+                        .confirm_alive => {},
+                        .confirm_faulty => {},
                         else => {},
                     }
 
@@ -857,6 +860,25 @@ pub fn Fleet() type {
             _ = try std.posix.recv(sock, msg, 0);
         }
 
+        // Handle the isd_* section of the message payload.
+        fn handleSuspicion(self: *Self, allocator: std.mem.Allocator, msg: *Message) !void {
+            const key = try keyFromIpPort(allocator, msg.isd_ip, msg.isd_port);
+            if (self.keyIsMe(key)) {
+                try self.IncrementIncarnation();
+                const pkey = self.getPersistentKeyFromKey(key);
+                if (pkey) |v| {
+                    self.isd_mtx.lock();
+                    defer self.isd_mtx.unlock();
+                    try self.isd_queue.append(.{
+                        .key = v,
+                        .state = .alive,
+                        .isd_cmd = .confirm_alive,
+                        .incarnation = try self.getIncarnation(),
+                    });
+                }
+            } else try self.setMemberInfo(key, .suspected, msg.isd_incarnation);
+        }
+
         // NOTE: Not using locks; only atomic.
         fn getIncarnation(self: *Self) !u64 {
             const me = try self.getOwnKey();
@@ -897,6 +919,15 @@ pub fn Fleet() type {
             const ip = key[0..sep];
             const port = std.fmt.parseUnsigned(u16, key[sep + 1 ..], 10) catch return false;
             return if (std.mem.eql(u8, ip, self.ip) and port == self.port) true else false;
+        }
+
+        // Use the key from members when adding items (key) to the isd_queue.
+        fn getPersistentKeyFromKey(self: *Self, key: []const u8) ?[]const u8 {
+            self.members_mtx.lock();
+            defer self.members_mtx.unlock();
+            const ptr = self.members.getKeyPtr(key);
+            if (ptr) |v| return v.*;
+            return null;
         }
 
         // Set default values for the message.
@@ -952,7 +983,7 @@ pub fn Fleet() type {
         //
         // Not allowed:
         //   alive -> faulty
-        //   faulty -> *
+        //   faulty -> suspected
         fn setMemberInfo(
             self: *Self,
             key: []const u8,
@@ -966,6 +997,7 @@ pub fn Fleet() type {
                 if (state) |s| {
                     if (v.state == .alive and s == .faulty) return;
                     if (v.state == .faulty and s != .alive) return;
+                    if (v.state == .faulty and s == .alive) v.incarnation = 0;
                     v.state = s;
                 }
 
