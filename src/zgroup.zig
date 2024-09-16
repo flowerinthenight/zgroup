@@ -270,6 +270,7 @@ pub fn Fleet() type {
                 var arena = std.heap.ArenaAllocator.init(self.allocator);
                 defer arena.deinit();
 
+                // 1st section of our infection-style dissemination payload.
                 switch (msg.isd1_cmd) {
                     .infect => {
                         const key = try self.msgIpPortToKey(
@@ -311,6 +312,7 @@ pub fn Fleet() type {
                     else => {},
                 }
 
+                // 2nd section of our infection-style dissemination payload.
                 switch (msg.isd2_cmd) {
                     .infect => {
                         const key = try self.msgIpPortToKey(
@@ -352,6 +354,7 @@ pub fn Fleet() type {
                     else => {},
                 }
 
+                // Main protocol message handler.
                 switch (msg.cmd) {
                     .join => block: {
                         if (msg.name == name) {
@@ -676,11 +679,11 @@ pub fn Fleet() type {
                 defer self.members_mtx.unlock();
                 for (isd.items) |k| {
                     const ptr = self.members.getPtr(k.key);
-                    if (ptr) |v| if (v.state == .faulty) continue;
-                    if (ptr) |v| if (k.state != v.state) continue;
+                    // if (ptr) |v| if (v.state == .faulty) continue;
+                    // if (ptr) |v| if (k.state != v.state) continue; // TODO: revisit
                     if (ptr) |v| try out.append(.{
                         .key = k.key,
-                        .state = v.state,
+                        .state = k.state,
                         .isd_cmd = k.isd_cmd,
                         .incarnation = v.incarnation,
                     });
@@ -967,7 +970,8 @@ pub fn Fleet() type {
             }
         }
 
-        // Convenience function.
+        // Convenience function. We assume an arena in the `allocator` arg so we don't have
+        // to free the allocated key after returning.
         fn setMsgSrcToOwn(self: *Self, allocator: std.mem.Allocator, msg: *Message) !void {
             const me = try std.fmt.allocPrint(allocator, "{s}:{d}", .{ self.ip, self.port });
             try self.setMessageSection(msg, .src, .{
@@ -985,7 +989,9 @@ pub fn Fleet() type {
                 1 => b: { // utilize the isd1_* section only
                     const pop1 = isd.items[0];
                     msg.isd1_cmd = .infect;
-                    if (pop1.isd_cmd != .noop) msg.isd1_cmd = pop1.isd_cmd else {
+                    if (pop1.isd_cmd != .noop) {
+                        msg.isd1_cmd = pop1.isd_cmd;
+                    } else {
                         if (pop1.state == .suspected) msg.isd1_cmd = .suspect;
                     }
 
@@ -999,7 +1005,9 @@ pub fn Fleet() type {
                 else => b: { // utilize both isd1_* and isd2_* sections
                     const pop1 = isd.items[0];
                     msg.isd1_cmd = .infect;
-                    if (pop1.isd_cmd != .noop) msg.isd1_cmd = pop1.isd_cmd else {
+                    if (pop1.isd_cmd != .noop) {
+                        msg.isd1_cmd = pop1.isd_cmd;
+                    } else {
                         if (pop1.state == .suspected) msg.isd1_cmd = .suspect;
                     }
 
@@ -1011,7 +1019,9 @@ pub fn Fleet() type {
 
                     const pop2 = isd.items[1];
                     msg.isd2_cmd = .infect;
-                    if (pop2.isd_cmd != .noop) msg.isd2_cmd = pop2.isd_cmd else {
+                    if (pop2.isd_cmd != .noop) {
+                        msg.isd2_cmd = pop2.isd_cmd;
+                    } else {
                         if (pop1.state == .suspected) msg.isd1_cmd = .suspect;
                     }
 
