@@ -33,8 +33,8 @@ pub fn Fleet() type {
         isd_queue: std.ArrayList(KeyInfo),
         isd_mtx: std.Thread.Mutex = .{},
 
-        /// SWIM protocol generic commands.
-        pub const Command = enum(u8) {
+        // SWIM protocol generic commands.
+        const Command = enum(u8) {
             noop,
             ack,
             nack,
@@ -43,8 +43,8 @@ pub fn Fleet() type {
             ping_req,
         };
 
-        /// Infection-style dissemination (ISD) commands.
-        pub const IsdCommand = enum(u8) {
+        // Infection-style dissemination (ISD) commands.
+        const IsdCommand = enum(u8) {
             noop,
             infect,
             suspect,
@@ -52,8 +52,8 @@ pub fn Fleet() type {
             confirm_faulty,
         };
 
-        /// Possible member states.
-        pub const MemberState = enum(u8) {
+        // Possible member states.
+        const MemberState = enum(u8) {
             alive,
             suspected,
             faulty,
@@ -66,8 +66,8 @@ pub fn Fleet() type {
             isd_cmd: IsdCommand = .noop,
         };
 
-        /// Our generic UDP comms/protocol payload.
-        pub const Message = packed struct {
+        // Our generic UDP comms/protocol payload.
+        const Message = packed struct {
             name: u128 = 0,
             // Section for ping, ping_req, ack, nack.
             cmd: Command = .noop,
@@ -88,8 +88,8 @@ pub fn Fleet() type {
             isd_incarnation: u64 = 0,
         };
 
-        /// Per-member context data.
-        pub const MemberData = struct {
+        // Per-member context data.
+        const MemberData = struct {
             state: MemberState = .alive,
             age_faulty: std.time.Timer = undefined,
             incarnation: u64 = 0,
@@ -214,9 +214,9 @@ pub fn Fleet() type {
             }
         }
 
-        // Returns a list of active members from the group/cluster. Caller owns the returning
-        // list, as well as each items in the array, which are duplicated from the internal
-        // list to prevent crashes during access due to potential changes in the main list.
+        /// Returns a list of active members from the group/cluster. Caller owns the returning
+        /// list, as well as each items in the array, which are duplicated from the internal
+        /// list to prevent crashes during access due to potential changes in the main list.
         pub fn memberNames(self: *Self, allocator: std.mem.Allocator) !std.ArrayList([]const u8) {
             var tmp = std.ArrayList([]const u8).init(allocator);
             defer tmp.deinit();
