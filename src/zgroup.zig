@@ -574,17 +574,17 @@ pub fn Fleet() type {
                             log.debug("[{d}] ack from {s}", .{ i, ping_key });
 
                             // TEST: start
-                            // if (i == 10) {
-                            //     log.debug("[{d}] --- trigger suspect for {s}", .{ i, ping_key });
-                            //     self.isd_mtx.lock();
-                            //     defer self.isd_mtx.unlock();
-                            //     try self.isd_queue.append(.{
-                            //         .key = ping_key,
-                            //         .state = .suspected,
-                            //         .incarnation = 0,
-                            //         .isd_cmd = .suspect,
-                            //     });
-                            // }
+                            if (i > 0 and i <= 100 and @mod(i, 20) == 0) {
+                                log.debug("[{d}] --- trigger suspect for {s}", .{ i, ping_key });
+                                self.isd_mtx.lock();
+                                defer self.isd_mtx.unlock();
+                                try self.isd_queue.append(.{
+                                    .key = ping_key,
+                                    .state = .suspected,
+                                    .incarnation = 0,
+                                    .isd_cmd = .suspect,
+                                });
+                            }
                             // TEST: end
                         },
                     }
