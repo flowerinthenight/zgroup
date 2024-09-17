@@ -1101,13 +1101,6 @@ pub fn Fleet() type {
         //    - {Alive:M, inc=j}, any j
         //    - {Suspect:M, inc=j}, any j
         //
-        // Allowed:
-        //   alive -> suspected
-        //   suspected -> faulty
-        //
-        // Not allowed:
-        //   alive -> faulty
-        //   faulty -> suspected
         fn setMemberInfo(
             self: *Self,
             key: []const u8,
