@@ -120,6 +120,15 @@ pub fn main() !void {
                 if (joined) break else std.time.sleep(bo.pause());
             }
         }
+
+        // if (i > 0 and @mod(i, 10) == 0) {
+        //     const members = try fleet.memberNames(gpa.allocator());
+        //     defer members.deinit();
+        //     for (members.items, 0..) |v, j| {
+        //         defer gpa.allocator().free(v);
+        //         log.info("(from main) member[{d}]: {s}", .{ j, v });
+        //     }
+        // }
     }
 }
 

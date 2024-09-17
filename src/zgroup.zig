@@ -214,6 +214,35 @@ pub fn Fleet() type {
             }
         }
 
+        // Returns a list of active members from the group/cluster. Caller owns the returning
+        // list, as well as each items in the array, which are duplicated from the internal
+        // list to prevent crashes during access due to potential changes in the main list.
+        pub fn memberNames(self: *Self, allocator: std.mem.Allocator) !std.ArrayList([]const u8) {
+            var tmp = std.ArrayList([]const u8).init(allocator);
+            defer tmp.deinit();
+
+            {
+                self.members_mtx.lock();
+                defer self.members_mtx.unlock();
+                var it = self.members.iterator();
+                while (it.next()) |v| {
+                    if (v.value_ptr.state == .faulty) continue;
+                    try tmp.append(v.key_ptr.*);
+                }
+            }
+
+            var out = std.ArrayList([]const u8).init(allocator);
+
+            if (tmp.items.len == 0) return out;
+
+            for (tmp.items) |v| {
+                const kdup = try allocator.dupe(u8, v);
+                try out.append(kdup);
+            }
+
+            return out;
+        }
+
         // Run internal UDP server for comms.
         fn listen(self: *Self) !void {
             log.info("Starting UDP server on :{d}...", .{self.port});
@@ -545,17 +574,17 @@ pub fn Fleet() type {
                             log.debug("[{d}] ack from {s}", .{ i, ping_key });
 
                             // TEST: start
-                            if (i == 10) {
-                                log.debug("[{d}] --- trigger suspect for {s}", .{ i, ping_key });
-                                self.isd_mtx.lock();
-                                defer self.isd_mtx.unlock();
-                                try self.isd_queue.append(.{
-                                    .key = ping_key,
-                                    .state = .suspected,
-                                    .incarnation = 0,
-                                    .isd_cmd = .suspect,
-                                });
-                            }
+                            // if (i == 10) {
+                            //     log.debug("[{d}] --- trigger suspect for {s}", .{ i, ping_key });
+                            //     self.isd_mtx.lock();
+                            //     defer self.isd_mtx.unlock();
+                            //     try self.isd_queue.append(.{
+                            //         .key = ping_key,
+                            //         .state = .suspected,
+                            //         .incarnation = 0,
+                            //         .isd_cmd = .suspect,
+                            //     });
+                            // }
                             // TEST: end
                         },
                     }
