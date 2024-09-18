@@ -158,6 +158,8 @@ pub fn Fleet() type {
 
         /// Start group membership tracking.
         pub fn run(self: *Self) !void {
+            log.debug("Message: size={d}, align={d}", .{ @sizeOf(Message), @alignOf(Message) });
+
             const me = try self.getOwnKey();
             defer self.allocator.free(me);
             try self.addOrSet(me, .alive, 0, true);
