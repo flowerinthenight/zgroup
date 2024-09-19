@@ -288,7 +288,9 @@ pub fn Fleet() type {
                 const arena = parent.allocator();
 
                 switch (msg.isd_cmd) {
-                    .infect, .confirm_alive => try self.handleIsdGeneric(arena, msg, false),
+                    .infect,
+                    .confirm_alive,
+                    => try self.handleIsd(arena, msg, false),
                     .suspect => try self.handleSuspicion(arena, msg),
                     .confirm_faulty => {
                         log.debug(">>>>> todo: confirm faulty", .{});
@@ -803,7 +805,9 @@ pub fn Fleet() type {
 
                     // Consume isd_* as the main ISD info.
                     switch (msg.isd_cmd) {
-                        .infect, .confirm_alive => try self.handleIsdGeneric(arena, msg, false),
+                        .infect,
+                        .confirm_alive,
+                        => try self.handleIsd(arena, msg, false),
                         .suspect => try self.handleSuspicion(arena, msg),
                         .confirm_faulty => {},
                         else => {},
@@ -866,7 +870,9 @@ pub fn Fleet() type {
 
                     // Consume isd_* as the main ISD info.
                     switch (msg.isd_cmd) {
-                        .infect, .confirm_alive => try args.self.handleIsdGeneric(arena, msg, false),
+                        .infect,
+                        .confirm_alive,
+                        => try args.self.handleIsd(arena, msg, false),
                         .suspect => try args.self.handleSuspicion(arena, msg),
                         .confirm_faulty => {},
                         else => {},
@@ -905,12 +911,7 @@ pub fn Fleet() type {
 
         // Handle the isd_* infection protocol of the message payload.
         // We are passing in an arena allocator here.
-        fn handleIsdGeneric(
-            self: *Self,
-            allocator: std.mem.Allocator,
-            msg: *Message,
-            force: bool,
-        ) !void {
+        fn handleIsd(self: *Self, allocator: std.mem.Allocator, msg: *Message, force: bool) !void {
             const key = try keyFromIpPort(allocator, msg.isd_ip, msg.isd_port);
             try self.setMemberInfo(key, msg.isd_state, msg.isd_incarnation, force);
         }
