@@ -180,3 +180,13 @@ test "dupe" {
     dbg("{s},{d}\n", .{ dup1, dup1.len });
     dbg("{s},{d}\n", .{ dup2, dup2.len });
 }
+
+test "name" {
+    // const fname = "callname_extra";
+    const fname = "group1";
+    const name = if (fname.len > 8) fname[0..8] else fname;
+    const v = std.mem.readVarInt(u64, name, .little);
+    dbg("{x}\n", .{v});
+    const rev = std.mem.asBytes(&v);
+    dbg("{s}, {d}\n", .{ rev, rev.len });
+}

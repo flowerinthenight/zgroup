@@ -68,7 +68,7 @@ pub fn Fleet() type {
 
         // Our generic UDP comms/protocol payload.
         const Message = packed struct {
-            name: u128 = 0,
+            name: u64 = 0,
             // Section for ping, ping_req, ack, nack.
             cmd: Command = .noop,
             src_ip: u32 = 0,
@@ -98,10 +98,7 @@ pub fn Fleet() type {
         /// Config for init().
         pub const Config = struct {
             /// We use the name as group identifier when groups are running over the
-            /// same network. At the moment, we use the UUID format as we can cast
-            /// it to `u128` for easy network sending than, say, a `[]u8`. Use init()
-            /// to initialize.
-            /// Example: "0xf47ac10b58cc4372a5670e02b2c3d479"
+            /// same network. Max of 8 chars (u64 in payload).
             name: []const u8,
 
             /// Member IP address for UDP, eg. "0.0.0.0". Use init() to initialize.
@@ -130,7 +127,7 @@ pub fn Fleet() type {
             log.debug("init: {s}:{d}", .{ config.ip, config.port });
             return Self{
                 .allocator = allocator,
-                .name = config.name,
+                .name = if (config.name.len > 8) config.name[0..8] else config.name,
                 .ip = config.ip,
                 .port = config.port,
                 .protocol_time = config.protocol_time,
@@ -201,8 +198,8 @@ pub fn Fleet() type {
 
             switch (msg.cmd) {
                 .ack => {
-                    const sname = try std.fmt.parseUnsigned(u128, self.name, 0);
-                    if (sname == msg.name) {
+                    const nn = std.mem.readVarInt(u64, self.name, .little);
+                    if (nn == msg.name) {
                         const key = try std.fmt.allocPrint(arena, "{s}:{d}", .{
                             dst_ip,
                             dst_port,
@@ -249,7 +246,7 @@ pub fn Fleet() type {
         fn listen(self: *Self) !void {
             log.info("Starting UDP server on :{d}...", .{self.port});
 
-            const name = try std.fmt.parseUnsigned(u128, self.name, 0);
+            const name = std.mem.readVarInt(u64, self.name, .little);
             const buf = try self.allocator.alloc(u8, @sizeOf(Message));
             defer self.allocator.free(buf); // release buffer
 
@@ -1040,7 +1037,7 @@ pub fn Fleet() type {
 
         // Set default values for the message.
         fn presetMessage(self: *Self, msg: *Message) !void {
-            msg.name = try std.fmt.parseUnsigned(u128, self.name, 0);
+            msg.name = std.mem.readVarInt(u64, self.name, .little);
             msg.cmd = .noop;
             msg.src_state = .alive;
             msg.dst_cmd = .noop;

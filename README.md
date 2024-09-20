@@ -10,20 +10,20 @@ $ zig build --summary all
 
 # Run the 1st process. The expected args look like:
 #
-#   ./zgroup name_in_uuid member_ip:port join_ip:port
+#   ./zgroup groupname member_ip:port join_ip:port
 #
 # Run the first process without the join args.
-$ ./zig-out/bin/zgroup 0xf47ac10b58cc4372a5670e02b2c3d479 0.0.0.0:8080 :
+$ ./zig-out/bin/zgroup group1 0.0.0.0:8080 :
 
 # Then you can run multiple instances, specifying the join address.
 # Join through the 1st process/node (different terminal):
-$ ./zig-out/bin/zgroup 0xf47ac10b58cc4372a5670e02b2c3d479 0.0.0.0:8081 0.0.0.0:8080
+$ ./zig-out/bin/zgroup group1 0.0.0.0:8081 0.0.0.0:8080
 
 # Join through the 2nd process/node (different terminal):
-$ ./zig-out/bin/zgroup 0xf47ac10b58cc4372a5670e02b2c3d479 0.0.0.0:8082 0.0.0.0:8081
+$ ./zig-out/bin/zgroup group1 0.0.0.0:8082 0.0.0.0:8081
 
 # Join through the 1st process/node (different terminal):
-$ ./zig-out/bin/zgroup 0xf47ac10b58cc4372a5670e02b2c3d479 0.0.0.0:8083 0.0.0.0:8080
+$ ./zig-out/bin/zgroup group1 0.0.0.0:8083 0.0.0.0:8080
 
 # and so on...
 ```
