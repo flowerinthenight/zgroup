@@ -172,7 +172,7 @@ test "execpost" {
             "-X",
             "POST",
             "-H",
-            "Content-Length: 1",
+            "Content-Length: 1", // somehow, this works with this endpoint (required though)
             "https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/seegmed7/chew/MTI3LjAuMC4xOjgwODA=",
         },
     });
@@ -182,7 +182,7 @@ test "execpost" {
         allocator.free(result.stderr);
     }
 
-    dbg("stdout: {s}\n", .{result.stdout});
+    dbg("{s}\n", .{result.stdout});
 }
 
 test "execget" {
@@ -202,7 +202,8 @@ test "execget" {
         allocator.free(result.stderr);
     }
 
-    dbg("stdout: {s}\n", .{result.stdout});
+    const out = std.mem.trim(u8, result.stdout, "\"");
+    dbg("{s}\n", .{out});
 }
 
 test "base64" {
