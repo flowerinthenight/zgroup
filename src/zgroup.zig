@@ -92,7 +92,7 @@ pub fn Fleet(UserData: type) type {
             isd_port: u16 = 0,
             isd_state: MemberState = .alive,
             isd_incarnation: u64 = 0,
-            // For leader selection protocol.
+            // For leader election protocol.
             // Format:
             //   |- cmd -|-- port (u16) --|----------- IP address (u32) ----------|
             //   00000011.1111111111111111.0000000011111111111111111111111111111111
@@ -106,7 +106,7 @@ pub fn Fleet(UserData: type) type {
             incarnation: u64 = 0,
         };
 
-        // Commands used for leader selection protocol.
+        // Commands used for leader election protocol.
         const LeaderCmd = enum(u8) {
             noop,
             heartbeat,
@@ -117,7 +117,7 @@ pub fn Fleet(UserData: type) type {
             /// Optional context data; to be passed back to the callback function(s).
             data: ?*UserData,
 
-            /// Optional callback for the leader. Note that the internal leader selection
+            /// Optional callback for the leader. Note that the internal leader election
             /// is best-effort only, and is provided to the caller for the purpose of
             /// providing an option for setting up facilities for other nodes to join the
             /// group. The address format is "ip:port", e.g. "127.0.0.1:8080".
