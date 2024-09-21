@@ -38,25 +38,36 @@ fn waiter(p: *pdata) void {
     }
 }
 
+fn testWaiter() !void {
+    var ev1 = std.Thread.ResetEvent{};
+    var ev2 = std.Thread.ResetEvent{};
+    var data = pdata{ .ev1 = &ev1, .ev2 = &ev2 };
+
+    const t = try std.Thread.spawn(.{}, waiter, .{&data});
+    t.detach();
+
+    std.time.sleep(std.time.ns_per_s * 5);
+    ev1.set();
+    ev2.set();
+    std.time.sleep(std.time.ns_per_s * 5);
+    ev1.set();
+    ev2.set();
+    std.time.sleep(std.time.ns_per_s * 5);
+}
+
+const UserData = struct {
+    dummy: u32,
+};
+
+fn callback(allocator: std.mem.Allocator, data: ?*UserData, addr: []const u8) !void {
+    defer allocator.free(addr);
+    _ = data;
+    log.info("callback: leader={s}", .{addr});
+}
+
+const Fleet = zgroup.Fleet(UserData);
+
 pub fn main() !void {
-    // if (true) {
-    //     var ev1 = std.Thread.ResetEvent{};
-    //     var ev2 = std.Thread.ResetEvent{};
-    //     var data = pdata{ .ev1 = &ev1, .ev2 = &ev2 };
-
-    //     const t = try std.Thread.spawn(.{}, waiter, .{&data});
-    //     t.detach();
-
-    //     std.time.sleep(std.time.ns_per_s * 5);
-    //     ev1.set();
-    //     ev2.set();
-    //     std.time.sleep(std.time.ns_per_s * 5);
-    //     ev1.set();
-    //     ev2.set();
-    //     std.time.sleep(std.time.ns_per_s * 5);
-    //     return;
-    // }
-
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var arena = std.heap.ArenaAllocator.init(gpa.allocator());
     defer arena.deinit(); // destroy arena in one go
@@ -85,10 +96,17 @@ pub fn main() !void {
         log.info("{any}, {s}", .{ entry.key_ptr.*, entry.value_ptr.args });
     }
 
+    var data = UserData{ .dummy = 10 };
+    const callbacks = Fleet.Callbacks{
+        .data = &data,
+        .onLeader = callback,
+        .on_leader_every = 10,
+    };
+
     const name = hm.getEntry(1).?.value_ptr.args;
     var member = hm.getEntry(2).?.value_ptr.args;
     var sep = std.mem.indexOf(u8, member, ":").?;
-    var config = zgroup.Fleet().Config{ .name = name, .ip = member[0..sep] };
+    var config = Fleet.Config{ .name = name, .ip = member[0..sep], .callbacks = callbacks };
     config.port = try std.fmt.parseUnsigned(u16, member[sep + 1 ..], 10);
 
     const join = hm.getEntry(3).?.value_ptr.args;
@@ -99,7 +117,7 @@ pub fn main() !void {
         join_port = try std.fmt.parseUnsigned(u16, join[sep + 1 ..], 10);
     }
 
-    var fleet = try zgroup.Fleet().init(gpa.allocator(), &config);
+    var fleet = try Fleet.init(gpa.allocator(), &config);
     try fleet.run();
     defer fleet.deinit();
 
@@ -120,6 +138,12 @@ pub fn main() !void {
                 if (joined) break else std.time.sleep(bo.pause());
             }
         }
+
+        // if (i > 0 and @mod(i, 5) == 0) b: {
+        //     const ldr = try fleet.getLeader(gpa.allocator()) orelse break :b;
+        //     defer gpa.allocator().free(ldr);
+        //     log.info("--- leader={s}", .{ldr});
+        // }
 
         // if (i > 0 and @mod(i, 10) == 0) {
         //     const members = try fleet.memberNames(gpa.allocator());
@@ -181,12 +205,20 @@ test "dupe" {
     dbg("{s},{d}\n", .{ dup2, dup2.len });
 }
 
-test "name" {
-    // const fname = "callname_extra";
-    const fname = "group1";
-    const name = if (fname.len > 8) fname[0..8] else fname;
-    const v = std.mem.readVarInt(u64, name, .little);
-    dbg("{x}\n", .{v});
-    const rev = std.mem.asBytes(&v);
-    dbg("{s}, {d}\n", .{ rev, rev.len });
+test "view" {
+    const en = enum(u4) {
+        change,
+        do,
+        start,
+    };
+
+    const e: en = .start;
+    dbg("size={d}\n", .{@sizeOf(@TypeOf(e))});
+    const ee: en = @enumFromInt(2);
+    dbg("int={any}\n", .{ee});
+
+    const val = 17293822569102704642; // 2
+    dbg("cmd={x}\n", .{(val & 0xf000000000000000) >> 60});
+    dbg("val={x}\n", .{val & 0x0fffffffffffffff});
+    dbg("{x}\n", .{0xffffffffffffffff & (0b11 << 62)});
 }

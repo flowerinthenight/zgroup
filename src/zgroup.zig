@@ -5,10 +5,11 @@
 //!   Ref: https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf
 //!
 const std = @import("std");
+const backoff = @import("zbackoff");
 
 const log = std.log.scoped(.zgroup);
 
-pub fn Fleet() type {
+pub fn Fleet(UserData: type) type {
     return struct {
         const Self = @This();
 
@@ -32,6 +33,11 @@ pub fn Fleet() type {
         // Internal queue for suspicion subprotocol.
         isd_queue: std.ArrayList(KeyInfo),
         isd_mtx: std.Thread.Mutex = .{},
+
+        // Leader's heartbeat timeout.
+        leader_hb: std.time.Timer,
+
+        callbacks: Callbacks,
 
         // SWIM protocol generic commands.
         const Command = enum(u8) {
@@ -86,6 +92,11 @@ pub fn Fleet() type {
             isd_port: u16 = 0,
             isd_state: MemberState = .alive,
             isd_incarnation: u64 = 0,
+            // For leader selection protocol.
+            // Format:
+            //   |- cmd -|-- port (u16) --|----------- IP address (u32) ----------|
+            //   00000011.1111111111111111.0000000011111111111111111111111111111111
+            leader_proto: u64 = 0,
         };
 
         // Per-member context data.
@@ -93,6 +104,38 @@ pub fn Fleet() type {
             state: MemberState = .alive,
             age_faulty: std.time.Timer = undefined,
             incarnation: u64 = 0,
+        };
+
+        // Commands used for leader selection protocol.
+        const LeaderCmd = enum(u8) {
+            noop,
+            heartbeat,
+            invalidate,
+        };
+
+        pub const Callbacks = struct {
+            /// Optional context data; to be passed back to the callback function(s).
+            data: ?*UserData,
+
+            /// Optional callback for the leader. Note that the internal leader selection
+            /// is best-effort only, and is provided to the caller for the purpose of
+            /// providing an option for setting up facilities for other nodes to join the
+            /// group. The address format is "ip:port", e.g. "127.0.0.1:8080".
+            ///
+            /// For example, you might want to setup a discovery service (e.g. K/V store)
+            /// where you will store the address from the callback during invocation.
+            /// Other joining nodes can then use the store to query the join address.
+            ///
+            /// Best-effort here means that there might be a brief moment where there
+            /// will be multiple leaders calling the callback from multiple nodes during
+            /// leader transitions; under normal conditions, there should only be one
+            /// leader calling the callback function.
+            onLeader: ?*const fn (std.mem.Allocator, ?*UserData, []const u8) anyerror!void,
+
+            /// If > 0, callback will be called every `protocol_time * val`. For example,
+            /// if your protocol time is 2s and this value is 10, `onLeader` will be
+            /// called every 20s. Default (0) means every `protocol_time`; same as 1.
+            on_leader_every: u64 = 0,
         };
 
         /// Config for init().
@@ -116,6 +159,9 @@ pub fn Fleet() type {
             /// Number of members we will request to do indirect pings for us (agents).
             /// Valid value at the moment is `1`.
             ping_req_k: u32 = 1,
+
+            /// See `onLeader` field in `Callbacks` for more information.
+            callbacks: Callbacks,
         };
 
         /// Create an instance of Self based on `config`. The `allocator` will be stored
@@ -136,6 +182,8 @@ pub fn Fleet() type {
                 .members = std.StringHashMap(MemberData).init(allocator),
                 .ping_queue = std.ArrayList([]const u8).init(allocator),
                 .isd_queue = std.ArrayList(KeyInfo).init(allocator),
+                .leader_hb = try std.time.Timer.start(),
+                .callbacks = config.callbacks,
             };
         }
 
@@ -155,7 +203,10 @@ pub fn Fleet() type {
 
         /// Start group membership tracking.
         pub fn run(self: *Self) !void {
-            log.debug("Message: size={d}, align={d}", .{ @sizeOf(Message), @alignOf(Message) });
+            log.debug("Message: size={d}, align={d}", .{
+                @sizeOf(Message),
+                @alignOf(Message),
+            });
 
             const me = try self.getOwnKey();
             defer self.allocator.free(me);
@@ -207,6 +258,12 @@ pub fn Fleet() type {
 
                         try self.addOrSet(key, .alive, 0, true);
                         joined.* = true;
+
+                        log.info("joined via {s}:{any}, name={s}", .{
+                            dst_ip,
+                            dst_port,
+                            name,
+                        });
                     }
                 },
                 else => {},
@@ -240,6 +297,35 @@ pub fn Fleet() type {
             }
 
             return out;
+        }
+
+        /// Returns the current leader of the group/cluster. Caller owns the returned
+        /// buffer. The returned buffer format is "ip:port", e.g. "127.0.0.1:8080".
+        pub fn getLeader(self: *Self, allocator: std.mem.Allocator) !?[]const u8 {
+            const n = self.getCounts();
+            if ((n[0] + n[1]) < 2) return try std.fmt.allocPrint(allocator, "{s}:{d}", .{
+                self.ip,
+                self.port,
+            });
+
+            var bo = backoff.Backoff{};
+            for (0..3) |_| {
+                if (self.leader_hb.read() < self.protocol_time) break;
+                std.time.sleep(bo.pause());
+            } else {
+                log.debug("getLeader: return null", .{});
+                return null;
+            }
+
+            const al = try self.getAssumedLeader();
+            const ipb = std.mem.asBytes(&al[0]);
+            return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}:{d}", .{
+                ipb[0],
+                ipb[1],
+                ipb[2],
+                ipb[3],
+                al[1],
+            });
         }
 
         // Run internal UDP server for comms.
@@ -352,6 +438,25 @@ pub fn Fleet() type {
                             // Use both dst_* and isd_* for ISD info.
                             var excludes: [1][]const u8 = .{src};
                             try self.setDstAndIsd(arena, msg, &excludes);
+
+                            // Handle leader protocol.
+                            var ipm = msg.leader_proto & 0x00000000FFFFFFFF;
+                            var portm = (msg.leader_proto & 0x0000FFFF00000000) >> 32;
+                            const cmdm: LeaderCmd = @enumFromInt((msg.leader_proto &
+                                0xF000000000000000) >> 60);
+
+                            if (cmdm == .heartbeat) b: {
+                                const al = try self.getAssumedLeader();
+                                if ((al[0] + al[1]) <= (ipm + portm)) {
+                                    _ = self.leader_hb.lap();
+                                    break :b;
+                                }
+
+                                const hb: u64 = @intFromEnum(LeaderCmd.invalidate);
+                                ipm = al[0] & 0x00000000FFFFFFFF;
+                                portm = (al[1] << 32) & 0x0000FFFF00000000;
+                                msg.leader_proto = (hb << 60) | ipm | portm;
+                            }
                         }
 
                         _ = std.posix.sendto(
@@ -385,6 +490,9 @@ pub fn Fleet() type {
                             var excludes: [1][]const u8 = .{dst};
                             try self.setDstAndIsd(arena, msg, &excludes);
 
+                            // Handle leader protocol (egress).
+                            try self.setLeaderProtoSend(msg);
+
                             const ack = self.ping(dst) catch false;
 
                             msg.cmd = .nack; // default
@@ -399,6 +507,9 @@ pub fn Fleet() type {
                                 msg.dst_incarnation = msg.src_incarnation;
 
                                 try self.addOrSet(dst, .alive, msg.src_incarnation, true);
+
+                                // Handle leader protocol (ingress).
+                                self.setLeaderProtoRecv(msg);
                             }
 
                             // Always set src_* to own info.
@@ -409,6 +520,9 @@ pub fn Fleet() type {
                                 msg.isd_cmd = .infect;
                                 try setMsgSection(msg, .isd, isd.items[0]);
                             }
+
+                            // Handle leader protocol (egress).
+                            try self.setLeaderProtoSend(msg);
 
                             _ = std.posix.sendto(
                                 sock,
@@ -591,6 +705,22 @@ pub fn Fleet() type {
                     }
                 }
 
+                // Setup leader callback. Mainly for joining.
+                var mod = self.callbacks.on_leader_every;
+                if (mod == 0) mod = 1;
+                if (i > 0 and @mod(i, mod) == 0) b: {
+                    const al = self.getAssumedLeader() catch break :b;
+                    if (!al[2]) break :b;
+                    if (self.callbacks.onLeader) |_| {} else break :b;
+                    const me = try std.fmt.allocPrint(self.allocator, "{s}:{d}", .{
+                        self.ip,
+                        self.port,
+                    });
+
+                    try self.callbacks.onLeader.?(self.allocator, self.callbacks.data, me);
+                }
+
+                // Pause before the next tick.
                 const elapsed = tm.read();
                 if (elapsed < self.protocol_time) {
                     const left = self.protocol_time - elapsed;
@@ -788,7 +918,16 @@ pub fn Fleet() type {
             var excludes: [1][]const u8 = .{key};
             try self.setDstAndIsd(arena, msg, &excludes);
 
+            // Handle leader protocol (egress).
+            try self.setLeaderProtoSend(msg);
+
             try self.send(ip, port, buf);
+
+            // Handle leader protocol (ingress).
+            const cmdm: LeaderCmd = @enumFromInt((msg.leader_proto &
+                0xF000000000000000) >> 60);
+
+            if (cmdm != .invalidate) _ = self.leader_hb.lap();
 
             return switch (msg.cmd) {
                 .ack => b: {
@@ -852,13 +991,20 @@ pub fn Fleet() type {
                 .incarnation = 0, // will not be used
             });
 
+            // Handle ISD info.
             const isd = try args.self.getIsdInfo(arena, 1);
             if (isd.items.len > 0) {
                 msg.isd_cmd = .infect;
                 try setMsgSection(msg, .isd, isd.items[0]);
             }
 
+            // Handle leader protocol (egress).
+            try args.self.setLeaderProtoSend(msg);
+
             args.self.send(ip, port, buf) catch |err| log.err("send failed: {any}", .{err});
+
+            // Handle leader protocol (ingress).
+            args.self.setLeaderProtoRecv(msg);
 
             switch (msg.cmd) {
                 .ack => {
@@ -982,14 +1128,14 @@ pub fn Fleet() type {
             const me = try self.getOwnKey();
             defer self.allocator.free(me);
             const ptr = self.members.getPtr(me);
-            if (ptr) |v|
-                _ = @atomicRmw(
-                    u64,
-                    &v.incarnation,
-                    std.builtin.AtomicRmwOp.Add,
-                    1,
-                    std.builtin.AtomicOrder.seq_cst,
-                );
+            if (ptr) |_| {} else return;
+            _ = @atomicRmw(
+                u64,
+                &ptr.?.incarnation,
+                std.builtin.AtomicRmwOp.Add,
+                1,
+                std.builtin.AtomicOrder.seq_cst,
+            );
         }
 
         // Caller must free the returned memory.
@@ -1005,7 +1151,7 @@ pub fn Fleet() type {
             return if (std.mem.eql(u8, ip, self.ip) and port == self.port) true else false;
         }
 
-        // Use the key from members when adding items (key) to the isd_queue.
+        // Use the key from `members` when adding items (key) to the isd_queue.
         fn getPersistentKeyFromKey(self: *Self, key: []const u8) ?[]const u8 {
             self.members_mtx.lock();
             defer self.members_mtx.unlock();
@@ -1018,8 +1164,8 @@ pub fn Fleet() type {
         // [1] = # of suspected members
         // [2] = # of faulty members
         // [3] = total number of members
-        fn getStatesN(self: *Self) [4]usize {
-            var n: [4]usize = .{ 0, 0, 0, 0 };
+        fn getCounts(self: *Self) std.meta.Tuple(&.{ usize, usize, usize, usize }) {
+            var n: [3]usize = .{ 0, 0, 0 };
             self.members_mtx.lock();
             defer self.members_mtx.unlock();
             var it = self.members.iterator();
@@ -1031,8 +1177,56 @@ pub fn Fleet() type {
                 }
             }
 
-            n[3] = self.members.count();
-            return n;
+            return .{
+                n[0],
+                n[1],
+                n[2],
+                self.members.count(),
+            };
+        }
+
+        // We always assume the node with the largest ip(int)+port to be leader.
+        // [0] - leader's (highest) ip in int format
+        // [1] - leader's (highest) port number
+        // [2] - true if we are the leader
+        fn getAssumedLeader(self: *Self) !std.meta.Tuple(&.{ u32, u64, bool }) {
+            var ipl: u32 = 0;
+            var portl: u16 = 0;
+            var me = false;
+            self.members_mtx.lock();
+            defer self.members_mtx.unlock();
+            var it = self.members.iterator();
+            while (it.next()) |v| {
+                if (v.value_ptr.state == .faulty) continue;
+                const sep = std.mem.indexOf(u8, v.key_ptr.*, ":") orelse continue;
+                const ip = v.key_ptr.*[0..sep];
+                const port = try std.fmt.parseUnsigned(u16, v.key_ptr.*[sep + 1 ..], 10);
+                const addr = try std.net.Address.resolveIp(ip, port);
+                if ((addr.in.sa.addr + port) > (ipl + portl)) {
+                    ipl = addr.in.sa.addr;
+                    portl = port;
+                    me = std.mem.eql(u8, ip, self.ip) and port == self.port;
+                }
+            }
+
+            return .{ ipl, portl, me };
+        }
+
+        fn setLeaderProtoSend(self: *Self, msg: *Message) !void {
+            const n = self.getCounts();
+            const lim = n[0] + n[1];
+            if (lim < 2) return;
+            const al = try self.getAssumedLeader();
+            const hb: u64 = @intFromEnum(LeaderCmd.heartbeat);
+            const ipl: u32 = al[0] & 0x00000000FFFFFFFF;
+            const portl: u64 = (al[1] << 32) & 0x0000FFFF00000000;
+            msg.leader_proto = (hb << 60) | ipl | portl;
+        }
+
+        fn setLeaderProtoRecv(self: *Self, msg: *Message) void {
+            const cmdm: LeaderCmd = @enumFromInt((msg.leader_proto &
+                0xF000000000000000) >> 60);
+            if (cmdm != .invalidate) _ = self.leader_hb.lap();
         }
 
         // Set default values for the message.
@@ -1044,6 +1238,7 @@ pub fn Fleet() type {
             msg.dst_state = .alive;
             msg.isd_cmd = .noop;
             msg.isd_state = .alive;
+            msg.leader_proto = 0;
         }
 
         fn setMsgSrcToOwn(self: *Self, msg: *Message) !void {
@@ -1056,8 +1251,9 @@ pub fn Fleet() type {
             });
         }
 
-        // Add a new member or update an existing member's info. This function duplicates the key
-        // using self.allocator when adding a new member, not when updating an existing one.
+        // Add a new member or update an existing member's info. This function duplicates
+        // the key using self.allocator when adding a new member, not when updating an
+        // existing one.
         fn addOrSet(
             self: *Self,
             key: []const u8,

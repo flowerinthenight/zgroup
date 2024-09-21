@@ -18,6 +18,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    lib.root_module.addImport("zbackoff", mod_zbackoff);
     b.installArtifact(lib);
 
     const exe = b.addExecutable(.{
