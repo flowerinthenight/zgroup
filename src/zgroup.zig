@@ -2,7 +2,7 @@
 //! It is based on the SWIM Protocol, specifically, SWIM+Inf.+Sus. variant of the gossip
 //! protocol. Linux-only for now.
 //!
-//!   Ref: https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf
+//!   Reference: https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf
 //!
 const std = @import("std");
 const backoff = @import("zbackoff");
