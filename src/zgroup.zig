@@ -312,10 +312,7 @@ pub fn Fleet(UserData: type) type {
             for (0..3) |_| {
                 if (self.leader_hb.read() < self.protocol_time) break;
                 std.time.sleep(bo.pause());
-            } else {
-                log.debug("getLeader: return null", .{});
-                return null;
-            }
+            } else return null;
 
             const al = try self.getAssumedLeader();
             const ipb = std.mem.asBytes(&al[0]);
