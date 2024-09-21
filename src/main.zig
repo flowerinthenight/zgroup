@@ -1,10 +1,6 @@
 const std = @import("std");
-const builtin = std.builtin;
-const AtomicOrder = std.builtin.AtomicOrder;
-const AtomicRmwOp = std.builtin.AtomicRmwOp;
 const backoff = @import("zbackoff");
 const zgroup = @import("zgroup.zig");
-const dbg = std.debug.print;
 
 const log = std.log;
 
