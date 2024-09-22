@@ -170,7 +170,6 @@ pub fn Fleet(UserData: type) type {
         /// expected to be long-running. Some areas will utilize an arena allocator
         /// based on the input allocator when it's appropriate.
         pub fn init(allocator: std.mem.Allocator, config: *const Config) !Self {
-            log.debug("init: {s}:{d}", .{ config.ip, config.port });
             return Self{
                 .allocator = allocator,
                 .name = if (config.name.len > 8) config.name[0..8] else config.name,
