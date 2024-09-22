@@ -228,12 +228,6 @@ pub fn Fleet(UserData: type) type {
             dst_port: u16,
             joined: *bool,
         ) !void {
-            log.info("joining via {s}:{any}, name={s}...", .{
-                dst_ip,
-                dst_port,
-                name,
-            });
-
             var parent = std.heap.ArenaAllocator.init(self.allocator);
             defer parent.deinit(); // destroy arena in one go
             const arena = parent.allocator();
