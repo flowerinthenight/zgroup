@@ -555,6 +555,7 @@ pub fn Fleet(UserData: type) type {
 
                 log.debug("[{d}]", .{i}); // log separator
 
+                var tm = try std.time.Timer.start();
                 var me_key: ?[]const u8 = null;
                 var me_inc: u64 = 0;
 
@@ -593,9 +594,7 @@ pub fn Fleet(UserData: type) type {
 
                 try self.removeFaultyMembers();
 
-                var tm = try std.time.Timer.start();
                 var key_ptr: ?[]const u8 = null;
-
                 const pt = try self.getPingTarget(arena);
                 if (pt) |v| key_ptr = v; // ensure non-null
 

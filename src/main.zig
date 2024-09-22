@@ -16,6 +16,7 @@ const UserData = struct {
     skip_callback: bool = false,
 };
 
+// We are using curl here as std.http.Client seems to not play well with this endpoint.
 // The "seegmed7" in the url is our API key. The allocator here is the allocator passed
 // to Fleet's init function. `addr`'s format is "ip:port", e.g. "127.0.0.1:8080", and
 // needs to be freed after use.
