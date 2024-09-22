@@ -98,7 +98,14 @@ pub fn main() !void {
 
     var member = hm.getEntry(2).?.value_ptr.*;
     var sep = std.mem.indexOf(u8, member, ":").?;
-    var config = Fleet.Config{ .name = name, .ip = member[0..sep], .callbacks = callbacks };
+
+    // This sample sets both protocol time and suspicion time to 2s.
+    var config = Fleet.Config{
+        .name = name,
+        .ip = member[0..sep],
+        .callbacks = callbacks,
+    };
+
     config.port = try std.fmt.parseUnsigned(u16, member[sep + 1 ..], 10);
 
     var fleet = try Fleet.init(gpa.allocator(), &config);
