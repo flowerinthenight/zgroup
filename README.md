@@ -30,4 +30,6 @@ $ ./zig-out/bin/zgroup group1 0.0.0.0:8083 0.0.0.0:8080
 # and so on...
 ```
 
+To run locally using **b)**, the sample binary uses a free service, [https://keyvalue.immanuel.co/](https://keyvalue.immanuel.co/), as the discovery service for the join address.
+
 The implementation is still a work-in-progress at this point, especially the infection-style member/state info dissemination, as well as the API to get the latest members in the cluster.
