@@ -72,4 +72,4 @@ for (members.items, 0..) |v, i| {
 }
 ```
 
-The tricky part of using **zgroup** is configuring the timeouts to optimize state propagation delay and member convergence times. The current implementation was only tested within a local network.
+The tricky part of using **zgroup** is configuring the timeouts to optimize state dissemination and member convergence. The current implementation was only tested within a local network.
