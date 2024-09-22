@@ -46,7 +46,7 @@ $ zig build --summary all
 # Run the first process:
 $ ./zig-out/bin/zgroup group1 0.0.0.0:8080
 
-# Then you can run additional instances (different terminal):
+# Add a second node (different terminal):
 $ ./zig-out/bin/zgroup group1 0.0.0.0:8081
 
 # Add a third node (different terminal):
