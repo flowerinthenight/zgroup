@@ -14,6 +14,7 @@ $ zig build --summary all
 #
 #   ./zgroup groupname member_ip:port [join_ip:port]
 #
+
 # Run the first process (join to self).
 $ ./zig-out/bin/zgroup group1 0.0.0.0:8080 0.0.0.0:8080
 
@@ -43,6 +44,7 @@ $ zig build --summary all
 #
 #   ./zgroup groupname member_ip:port
 #
+
 # Run the first process:
 $ ./zig-out/bin/zgroup group1 0.0.0.0:8080
 
