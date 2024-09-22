@@ -63,6 +63,7 @@ To get the current members of the group, you can try something like:
 ```zig
 const members = try fleet.memberNames(gpa.allocator());
 defer members.deinit();
+
 for (members.items, 0..) |v, i| {
     defer gpa.allocator().free(v);
     log.info("member[{d}]: {s}", .{ i, v });
