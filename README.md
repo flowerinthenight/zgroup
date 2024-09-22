@@ -4,7 +4,7 @@
 
 A [sample](./src/main.zig) binary is provided to show a way to use the library. There's two ways to run the sample: **a)** manually specifying the join address, and **b)** using an external service to get the join address.
 
-To run locally using **a)**, try:
+To run locally using **a)**, try something like:
 
 ```sh
 # Build the sample binary:
