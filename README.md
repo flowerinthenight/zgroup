@@ -71,3 +71,5 @@ for (members.items, 0..) |v, i| {
     log.info("member[{d}]: {s}", .{ i, v });
 }
 ```
+
+The tricky part of using **zgroup** is configuring the timeouts to optimize state propagation delay and member convergence times. The current implementation was only tested within a local network.
