@@ -10,12 +10,12 @@ $ zig build --summary all
 
 # Run the 1st process. The expected args look like:
 #
-#   ./zgroup groupname member_ip:port join_ip:port
+#   ./zgroup groupname member_ip:port [join_ip:port]
 #
-# Run the first process without the join args.
-$ ./zig-out/bin/zgroup group1 0.0.0.0:8080 :
+# Run the first process (join to self).
+$ ./zig-out/bin/zgroup group1 0.0.0.0:8080 0.0.0.0:8080
 
-# Then you can run multiple instances, specifying the join address.
+# Then you can run additional instances.
 # Join through the 1st process/node (different terminal):
 $ ./zig-out/bin/zgroup group1 0.0.0.0:8081 0.0.0.0:8080
 
