@@ -13,6 +13,7 @@ pub const std_options = .{
 
 const UserData = struct {
     group: []const u8,
+    skip_callback: bool = false,
 };
 
 // The "seegmed7" in the url is our API key. The allocator here is the allocator passed
@@ -20,6 +21,7 @@ const UserData = struct {
 // needs to be freed after use.
 fn callback(allocator: std.mem.Allocator, data: ?*UserData, addr: []const u8) !void {
     defer allocator.free(addr);
+    if (data.?.skip_callback) return;
 
     const enc = std.base64.Base64Encoder.init(std.base64.url_safe_alphabet_chars, '=');
     const buf = try allocator.alloc(u8, enc.calcSize(addr.len));
@@ -148,7 +150,9 @@ pub fn main() !void {
                     }
                 },
                 4 => {
-                    // Join address is provided.
+                    // Join address is provided. Skip callback.
+                    data.skip_callback = true;
+
                     const join = hm.getEntry(3).?.value_ptr.*;
                     sep = std.mem.indexOf(u8, join, ":").?;
                     const join_ip = join[0..sep];
