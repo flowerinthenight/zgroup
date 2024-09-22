@@ -78,147 +78,85 @@ test "view" {
     dbg("{x}\n", .{0xffffffffffffffff & (0b11 << 62)});
 }
 
-test "httpget" {
-    var parent = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer parent.deinit();
-    const arena = parent.allocator();
+// test "httpget" {
+//     var parent = std.heap.ArenaAllocator.init(std.testing.allocator);
+//     defer parent.deinit();
+//     const arena = parent.allocator();
 
-    var client = std.http.Client{ .allocator = arena };
-    defer client.deinit();
+//     var client = std.http.Client{ .allocator = arena };
+//     defer client.deinit();
 
-    const endpoint = "https://keyvalue.immanuel.co/api/KeyVal/GetValue/seegmed7/chew";
-    const uri = try std.Uri.parse(endpoint);
+//     const endpoint = "https://keyvalue.immanuel.co/api/KeyVal/GetValue/seegmed7/chew";
+//     const uri = try std.Uri.parse(endpoint);
 
-    const server_header_buffer: []u8 = try arena.alloc(u8, 8 * 1024 * 4);
-    var req = try client.open(.GET, uri, std.http.Client.RequestOptions{
-        .server_header_buffer = server_header_buffer,
-    });
+//     const server_header_buffer: []u8 = try arena.alloc(u8, 8 * 1024 * 4);
+//     var req = try client.open(.GET, uri, std.http.Client.RequestOptions{
+//         .server_header_buffer = server_header_buffer,
+//     });
 
-    defer req.deinit();
+//     defer req.deinit();
 
-    try req.send();
-    try req.finish();
-    try req.wait();
+//     try req.send();
+//     try req.finish();
+//     try req.wait();
 
-    const repstr = try req.reader().readAllAlloc(arena, std.math.maxInt(usize));
+//     const repstr = try req.reader().readAllAlloc(arena, std.math.maxInt(usize));
 
-    dbg("reply={s}\n", .{repstr});
-}
+//     dbg("reply={s}\n", .{repstr});
+// }
 
-test "httppost" {
-    var parent = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer parent.deinit();
-    const arena = parent.allocator();
+// test "httppost" {
+//     var parent = std.heap.ArenaAllocator.init(std.testing.allocator);
+//     defer parent.deinit();
+//     const arena = parent.allocator();
 
-    var client = std.http.Client{ .allocator = arena };
-    defer client.deinit();
+//     var client = std.http.Client{ .allocator = arena };
+//     defer client.deinit();
 
-    const endpoint = "https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/seegmed7/chew/something";
-    const uri = try std.Uri.parse(endpoint);
+//     const endpoint = "https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/seegmed7/chew/something";
+//     const uri = try std.Uri.parse(endpoint);
 
-    const server_header_buffer: []u8 = try arena.alloc(u8, 8 * 1024 * 4);
-    var req = try client.open(.POST, uri, std.http.Client.RequestOptions{
-        .server_header_buffer = server_header_buffer,
-        .extra_headers = &[_]std.http.Header{.{ .name = "content-length", .value = "9" }},
-    });
+//     const server_header_buffer: []u8 = try arena.alloc(u8, 8 * 1024 * 4);
+//     var req = try client.open(.POST, uri, std.http.Client.RequestOptions{
+//         .server_header_buffer = server_header_buffer,
+//         .extra_headers = &[_]std.http.Header{.{ .name = "content-length", .value = "9" }},
+//     });
 
-    defer req.deinit();
+//     defer req.deinit();
 
-    try req.send();
-    try req.finish();
-    try req.wait();
+//     try req.send();
+//     try req.finish();
+//     try req.wait();
 
-    const repstr = try req.reader().readAllAlloc(arena, std.math.maxInt(usize));
+//     const repstr = try req.reader().readAllAlloc(arena, std.math.maxInt(usize));
 
-    dbg("reply={s}\n", .{repstr});
-}
+//     dbg("reply={s}\n", .{repstr});
+// }
 
-test "httpfetch" {
-    var parent = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer parent.deinit();
-    const arena = parent.allocator();
+// test "httpfetch" {
+//     var parent = std.heap.ArenaAllocator.init(std.testing.allocator);
+//     defer parent.deinit();
+//     const arena = parent.allocator();
 
-    var client = std.http.Client{ .allocator = arena };
-    defer client.deinit();
+//     var client = std.http.Client{ .allocator = arena };
+//     defer client.deinit();
 
-    // https://api.keyval.org/get/chew
-    // const endpoint = "https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/seegmed7/chew/something";
-    const endpoint = "https://api.keyval.org/set/chew/bloodboil";
-    const uri = try std.Uri.parse(endpoint);
+//     // https://api.keyval.org/get/chew
+//     // const endpoint = "https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/seegmed7/chew/something";
+//     const endpoint = "https://api.keyval.org/set/chew/bloodboil";
+//     const uri = try std.Uri.parse(endpoint);
 
-    var response_body = std.ArrayList(u8).init(arena);
+//     var response_body = std.ArrayList(u8).init(arena);
 
-    const response = try client.fetch(std.http.Client.FetchOptions{
-        .method = std.http.Method.POST,
-        .location = .{ .uri = uri },
-        // .extra_headers = &[_]std.http.Header{.{ .name = "Content-Length", .value = "9" }},
-        .response_storage = .{ .dynamic = &response_body },
-    });
+//     const response = try client.fetch(std.http.Client.FetchOptions{
+//         .method = std.http.Method.POST,
+//         .location = .{ .uri = uri },
+//         // .extra_headers = &[_]std.http.Header{.{ .name = "Content-Length", .value = "9" }},
+//         .response_storage = .{ .dynamic = &response_body },
+//     });
 
-    if (response.status != .ok) dbg("booooooo\n", .{});
+//     if (response.status != .ok) dbg("booooooo\n", .{});
 
-    const parsed_body = try response_body.toOwnedSlice();
-    dbg("RESPONSE: {s}\n", .{parsed_body});
-}
-
-test "execpost" {
-    var tm = try std.time.Timer.start();
-    defer dbg("took {any}", .{std.fmt.fmtDuration(tm.read())});
-    const allocator = std.testing.allocator;
-    const result = try std.process.Child.run(.{
-        .allocator = allocator,
-        .argv = &[_][]const u8{
-            "curl",
-            "-X",
-            "POST",
-            "-H",
-            "Content-Length: 1", // somehow, this works with this endpoint (required though)
-            "https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/seegmed7/chew/MTI3LjAuMC4xOjgwODA=",
-        },
-    });
-
-    defer {
-        allocator.free(result.stdout);
-        allocator.free(result.stderr);
-    }
-
-    dbg("{s}\n", .{result.stdout});
-}
-
-test "execget" {
-    var tm = try std.time.Timer.start();
-    defer dbg("took {any}", .{std.fmt.fmtDuration(tm.read())});
-    const allocator = std.testing.allocator;
-    const result = try std.process.Child.run(.{
-        .allocator = allocator,
-        .argv = &[_][]const u8{
-            "curl",
-            "https://keyvalue.immanuel.co/api/KeyVal/GetValue/seegmed7/chew",
-        },
-    });
-
-    defer {
-        allocator.free(result.stdout);
-        allocator.free(result.stderr);
-    }
-
-    const out = std.mem.trim(u8, result.stdout, "\"");
-    dbg("{s}\n", .{out});
-}
-
-test "base64" {
-    var tm = try std.time.Timer.start();
-    defer dbg("took {any}", .{std.fmt.fmtDuration(tm.read())});
-    const src = "127.0.0.1:8080";
-    const enc = std.base64.Base64Encoder.init(std.base64.url_safe_alphabet_chars, '=');
-    const buf = try std.testing.allocator.alloc(u8, enc.calcSize(src.len));
-    defer std.testing.allocator.free(buf);
-    const out = enc.encode(buf, src);
-    dbg("enc={s}\n", .{out});
-
-    const dec = std.base64.Base64Decoder.init(std.base64.url_safe_alphabet_chars, '=');
-    const buf2 = try std.testing.allocator.alloc(u8, try dec.calcSizeUpperBound(out.len));
-    defer std.testing.allocator.free(buf2);
-    try dec.decode(buf2, out);
-    dbg("dec={s}\n", .{buf2});
-}
+//     const parsed_body = try response_body.toOwnedSlice();
+//     dbg("RESPONSE: {s}\n", .{parsed_body});
+// }
