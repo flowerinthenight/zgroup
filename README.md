@@ -65,6 +65,6 @@ const members = try fleet.memberNames(gpa.allocator());
 defer members.deinit();
 for (members.items, 0..) |v, i| {
     defer gpa.allocator().free(v);
-    log.info("(from main) member[{d}]: {s}", .{ i, v });
+    log.info("member[{d}]: {s}", .{ i, v });
 }
 ```
