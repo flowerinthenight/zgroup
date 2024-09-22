@@ -30,6 +30,32 @@ $ ./zig-out/bin/zgroup group1 0.0.0.0:8083 0.0.0.0:8080
 # and so on...
 ```
 
-To run locally using **b)**, the sample binary uses a free service, [https://keyvalue.immanuel.co/](https://keyvalue.immanuel.co/), as the discovery service for the join address.
+To run locally using **b)**, the sample binary uses a free service, [https://keyvalue.immanuel.co/](https://keyvalue.immanuel.co/), as the discovery service for the join address. The library provides a simple, best-effort-basis leader election mechanism for this purpose by providing a callback with a join address information that can be stored on an external service.
+
+```sh
+# Build the sample binary:
+$ zig build --summary all
+
+# The sample code embeds the API key, with the group name as key. I suggest you change that.
+
+# Run the 1st process. The expected args look like:
+#
+#   ./zgroup groupname member_ip:port
+#
+# Run the first process (join to self).
+$ ./zig-out/bin/zgroup group1 0.0.0.0:8080 0.0.0.0:8080
+
+# Then you can run additional instances.
+# Join through the 1st process/node (different terminal):
+$ ./zig-out/bin/zgroup group1 0.0.0.0:8081 0.0.0.0:8080
+
+# Join through the 2nd process/node (different terminal):
+$ ./zig-out/bin/zgroup group1 0.0.0.0:8082 0.0.0.0:8081
+
+# Join through the 1st process/node (different terminal):
+$ ./zig-out/bin/zgroup group1 0.0.0.0:8083 0.0.0.0:8080
+
+# and so on...
+```
 
 The implementation is still a work-in-progress at this point, especially the infection-style member/state info dissemination, as well as the API to get the latest members in the cluster.
