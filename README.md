@@ -58,4 +58,13 @@ $ ./zig-out/bin/zgroup group1 0.0.0.0:8083
 # and so on...
 ```
 
-The implementation is still a work-in-progress at this point, especially the infection-style member/state info dissemination, as well as the API to get the latest members in the cluster.
+To get the current members of the group, you can try something like:
+
+```zig
+const members = try fleet.memberNames(gpa.allocator());
+defer members.deinit();
+for (members.items, 0..) |v, i| {
+    defer gpa.allocator().free(v);
+    log.info("(from main) member[{d}]: {s}", .{ i, v });
+}
+```
