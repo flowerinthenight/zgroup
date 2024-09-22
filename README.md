@@ -36,24 +36,24 @@ To run locally using **b)**, the sample binary uses a free service, [https://key
 # Build the sample binary:
 $ zig build --summary all
 
-# The sample code embeds the API key, with the group name as key. I suggest you change that.
+# The sample code embeds the API key, with the group name as key.
+# I suggest you change that.
 
 # Run the 1st process. The expected args look like:
 #
 #   ./zgroup groupname member_ip:port
 #
-# Run the first process (join to self).
-$ ./zig-out/bin/zgroup group1 0.0.0.0:8080 0.0.0.0:8080
+# Run the first process:
+$ ./zig-out/bin/zgroup group1 0.0.0.0:8080
 
-# Then you can run additional instances.
-# Join through the 1st process/node (different terminal):
-$ ./zig-out/bin/zgroup group1 0.0.0.0:8081 0.0.0.0:8080
+# Then you can run additional instances (different terminal):
+$ ./zig-out/bin/zgroup group1 0.0.0.0:8081
 
-# Join through the 2nd process/node (different terminal):
-$ ./zig-out/bin/zgroup group1 0.0.0.0:8082 0.0.0.0:8081
+# Add a third node (different terminal):
+$ ./zig-out/bin/zgroup group1 0.0.0.0:8082
 
-# Join through the 1st process/node (different terminal):
-$ ./zig-out/bin/zgroup group1 0.0.0.0:8083 0.0.0.0:8080
+# Add a fourth node (different terminal):
+$ ./zig-out/bin/zgroup group1 0.0.0.0:8083
 
 # and so on...
 ```
