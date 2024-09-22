@@ -160,3 +160,13 @@ test "view" {
 //     const parsed_body = try response_body.toOwnedSlice();
 //     dbg("RESPONSE: {s}\n", .{parsed_body});
 // }
+
+test "returnblock" {
+    {
+        dbg("block entry\n", .{});
+        defer dbg("block exit\n", .{});
+        if (true) return;
+    }
+
+    dbg("should not be here\n", .{});
+}
