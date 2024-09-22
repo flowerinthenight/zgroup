@@ -1,8 +1,10 @@
 [![main](https://github.com/flowerinthenight/zgroup/actions/workflows/main.yml/badge.svg)](https://github.com/flowerinthenight/zgroup/actions/workflows/main.yml)
 
-**zgroup** is a library that can manage cluster membership and member failure detection. It is based on the [SWIM Protocol](https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf), specifically the **SWIM+Inf.+Susp.** variant of the gossip protocol. Linux-only for now.
+**zgroup** is a library that can manage cluster membership and member failure detection. It is based on the [SWIM Protocol](https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf), specifically the **SWIM+Inf.+Susp.** variant of the gossip protocol.
 
-To run locally:
+A [sample binary](./src/main.zig) is provided to show a way to use the library. There's two ways to run the sample: a) manually specifying the join address, and b) using an external service to get the join address.
+
+To run locally using a), try:
 
 ```sh
 # Build the sample binary:
