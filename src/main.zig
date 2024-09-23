@@ -73,6 +73,8 @@ pub fn main() !void {
     var config = Fleet.Config{
         .name = name,
         .ip = member[0..sep],
+        .protocol_time = std.time.ns_per_s * 1,
+        .suspected_time = std.time.ns_per_s * 1,
         .callbacks = callbacks,
     };
 

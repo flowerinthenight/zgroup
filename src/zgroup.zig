@@ -561,13 +561,6 @@ pub fn Fleet(UserData: type) type {
                     defer self.members_mtx.unlock();
                     var it = self.members.iterator();
                     while (it.next()) |v| {
-                        log.debug("[{d}] members: key={s}, state={any}, inc={d}", .{
-                            i,
-                            v.key_ptr.*,
-                            v.value_ptr.state,
-                            v.value_ptr.incarnation,
-                        });
-
                         if (self.keyIsMe(v.key_ptr.*)) {
                             if (v.value_ptr.state != .alive) {
                                 v.value_ptr.state = .alive;
@@ -588,6 +581,15 @@ pub fn Fleet(UserData: type) type {
                         .incarnation = me_inc,
                     });
                 }
+
+                const counts = self.getCounts();
+                log.debug("[{d}] members: alive={d}, suspected={d}, faulty={d}, total={d}", .{
+                    i,
+                    counts[0],
+                    counts[1],
+                    counts[2],
+                    counts[3],
+                });
 
                 try self.removeFaultyMembers();
 
