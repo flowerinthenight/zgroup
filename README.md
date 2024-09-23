@@ -1,4 +1,5 @@
 [![main](https://github.com/flowerinthenight/zgroup/actions/workflows/main.yml/badge.svg)](https://github.com/flowerinthenight/zgroup/actions/workflows/main.yml)
+[![Docker Repository on Quay](https://quay.io/repository/flowerinthenight/zgroup/status "Docker Repository on Quay")](https://quay.io/repository/flowerinthenight/zgroup)
 
 **zgroup** is a [Zig](https://ziglang.org/) library that can manage cluster membership and member failure detection. It is based on the [SWIM Protocol](https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf), specifically the **SWIM+Inf.+Susp.** variant of the gossip protocol.
 
