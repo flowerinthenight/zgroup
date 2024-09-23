@@ -196,14 +196,14 @@ pub fn main() !void {
         //     log.info("--- leader={s}", .{ldr});
         // }
 
-        // if (i > 0 and @mod(i, 10) == 0) {
-        //     const members = try fleet.memberNames(gpa.allocator());
-        //     defer members.deinit();
-        //     for (members.items, 0..) |v, j| {
-        //         defer gpa.allocator().free(v);
-        //         log.info("(from main) member[{d}]: {s}", .{ j, v });
-        //     }
-        // }
+        if (i > 0 and @mod(i, 10) == 0) {
+            const members = try fleet.getMembers(gpa.allocator());
+            defer members.deinit();
+            for (members.items, 0..) |v, j| {
+                defer gpa.allocator().free(v);
+                log.info("(from main) member[{d}]: {s}", .{ j, v });
+            }
+        }
     }
 }
 

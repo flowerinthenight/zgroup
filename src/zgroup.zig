@@ -266,7 +266,7 @@ pub fn Fleet(UserData: type) type {
         /// Returns a list of active members from the group/cluster. Caller owns the returning
         /// list, as well as each items in the array, which are duplicated from the internal
         /// list to prevent crashes during access due to potential changes in the main list.
-        pub fn memberNames(self: *Self, allocator: std.mem.Allocator) !std.ArrayList([]const u8) {
+        pub fn getMembers(self: *Self, allocator: std.mem.Allocator) !std.ArrayList([]const u8) {
             var tmp = std.ArrayList([]const u8).init(allocator);
             defer tmp.deinit();
 

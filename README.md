@@ -63,7 +63,7 @@ $ ./zig-out/bin/zgroup group1 0.0.0.0:8083
 To get the current members of the group, you can try something like:
 
 ```zig
-const members = try fleet.memberNames(gpa.allocator());
+const members = try fleet.getMembers(gpa.allocator());
 defer members.deinit();
 
 for (members.items, 0..) |v, i| {
