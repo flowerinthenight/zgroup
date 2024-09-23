@@ -145,10 +145,8 @@ pub fn main() !void {
         if (i > 0 and @mod(i, 10) == 0) {
             const members = try fleet.getMembers(gpa.allocator());
             defer members.deinit();
-            for (members.items, 0..) |v, j| {
-                defer gpa.allocator().free(v);
-                log.info("(from main) member[{d}]: {s}", .{ j, v });
-            }
+            log.info("main: members={d}", .{members.items.len});
+            for (members.items) |v| gpa.allocator().free(v);
         }
     }
 }
