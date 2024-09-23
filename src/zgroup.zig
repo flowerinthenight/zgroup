@@ -227,9 +227,9 @@ pub fn Fleet(UserData: type) type {
             dst_port: u16,
             joined: *bool,
         ) !void {
-            var parent = std.heap.ArenaAllocator.init(self.allocator);
-            defer parent.deinit(); // destroy arena in one go
-            const arena = parent.allocator();
+            var aa = std.heap.ArenaAllocator.init(self.allocator);
+            defer aa.deinit(); // destroy arena in one go
+            const arena = aa.allocator();
 
             const buf = try arena.alloc(u8, @sizeOf(Message));
             const msg: *Message = @ptrCast(@alignCast(buf));
@@ -356,9 +356,9 @@ pub fn Fleet(UserData: type) type {
                     continue;
                 };
 
-                var parent = std.heap.ArenaAllocator.init(self.allocator);
-                defer parent.deinit(); // destroy arena in one go
-                const arena = parent.allocator();
+                var aa = std.heap.ArenaAllocator.init(self.allocator);
+                defer aa.deinit(); // destroy arena in one go
+                const arena = aa.allocator();
 
                 switch (msg.isd_cmd) {
                     .infect,
@@ -546,9 +546,9 @@ pub fn Fleet(UserData: type) type {
         fn tick(self: *Self) !void {
             var i: usize = 0;
             while (true) : (i += 1) {
-                var parent = std.heap.ArenaAllocator.init(self.allocator);
-                defer parent.deinit(); // destroy arena in one go
-                const arena = parent.allocator();
+                var aa = std.heap.ArenaAllocator.init(self.allocator);
+                defer aa.deinit(); // destroy arena in one go
+                const arena = aa.allocator();
 
                 log.debug("[{d}]", .{i}); // log separator
 
@@ -885,9 +885,9 @@ pub fn Fleet(UserData: type) type {
         // eg. "127.0.0.1:8080". For pings, we use the src_* payload fields
         // to identify us, the sender.
         fn ping(self: *Self, key: []const u8) !bool {
-            var parent = std.heap.ArenaAllocator.init(self.allocator);
-            defer parent.deinit(); // destroy arena in one go
-            const arena = parent.allocator();
+            var aa = std.heap.ArenaAllocator.init(self.allocator);
+            defer aa.deinit(); // destroy arena in one go
+            const arena = aa.allocator();
 
             const sep = std.mem.indexOf(u8, key, ":") orelse return false;
             const ip = key[0..sep];
@@ -955,9 +955,9 @@ pub fn Fleet(UserData: type) type {
         fn indirectPing(args: *IndirectPing) !void {
             log.debug("[thread] try pinging {s} via {s}", .{ args.dst, args.src });
 
-            var parent = std.heap.ArenaAllocator.init(args.self.allocator);
-            defer parent.deinit(); // destroy arena in one go
-            const arena = parent.allocator();
+            var aa = std.heap.ArenaAllocator.init(args.self.allocator);
+            defer aa.deinit(); // destroy arena in one go
+            const arena = aa.allocator();
 
             const sep = std.mem.indexOf(u8, args.src, ":") orelse return;
             const ip = args.src[0..sep];

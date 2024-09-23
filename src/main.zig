@@ -1,6 +1,6 @@
 const std = @import("std");
-const backoff = @import("zbackoff");
 const zgroup = @import("zgroup.zig");
+const backoff = @import("zbackoff");
 
 const log = std.log;
 
@@ -154,6 +154,7 @@ pub fn main() !void {
 }
 
 // We are using curl here as std.http.Client seems to not play well with this endpoint.
+// The "seegmed7" in the url is our API key.
 fn setJoinAddress(allocator: std.mem.Allocator, group: []const u8, addr: []const u8) !void {
     const enc = std.base64.Base64Encoder.init(std.base64.url_safe_alphabet_chars, '=');
     const buf = try allocator.alloc(u8, enc.calcSize(addr.len));
