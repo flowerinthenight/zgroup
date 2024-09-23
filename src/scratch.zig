@@ -170,3 +170,11 @@ test "returnblock" {
 
     dbg("should not be here\n", .{});
 }
+
+test "accesslen" {
+    const i: usize = 1;
+    const buf = try std.fmt.allocPrint(std.testing.allocator, "hello world {d}", .{i});
+    dbg("len={d}\n", .{buf.len});
+    std.testing.allocator.free(buf);
+    dbg("len={d}\n", .{buf.len});
+}

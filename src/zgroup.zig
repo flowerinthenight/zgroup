@@ -591,8 +591,6 @@ pub fn Fleet(UserData: type) type {
                     counts[3],
                 });
 
-                try self.removeFaultyMembers();
-
                 var key_ptr: ?[]const u8 = null;
                 const pt = try self.getPingTarget(arena);
                 if (pt) |v| key_ptr = v; // ensure non-null
@@ -708,6 +706,11 @@ pub fn Fleet(UserData: type) type {
 
                     try self.callbacks.onLeader.?(self.allocator, self.callbacks.data, me);
                 }
+
+                // TODO: At the moment, this causes intermittent crashes due to keys
+                // becoming freed. Needs more investigation. For now, we're not
+                // removing any keys; just keep them all with .faulty state.
+                // try self.removeFaultyMembers();
 
                 // Pause before the next tick.
                 const elapsed = tm.read();
@@ -1105,7 +1108,6 @@ pub fn Fleet(UserData: type) type {
         // Handle the isd_* faulty protocol of the message payload.
         // We are passing in an arena allocator here.
         fn handleConfirmFaulty(self: *Self, allocator: std.mem.Allocator, msg: *Message) !void {
-            log.debug(">>>>> listen: confirm faulty", .{});
             const key = try keyFromIpPort(allocator, msg.isd_ip, msg.isd_port);
             if (!self.keyIsMe(key)) {
                 try self.setMemberInfo(key, .faulty, null, true);
