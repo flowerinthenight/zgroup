@@ -2,7 +2,7 @@
 
 **zgroup** is a [Zig](https://ziglang.org/) library that can manage cluster membership and member failure detection. It is based on the [SWIM Protocol](https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf), specifically the **SWIM+Inf.+Susp.** variant of the gossip protocol.
 
-A [sample](./src/main.zig) binary is provided to show a way to use the library. There are two ways to run the sample: **a)** manually specifying the join address, and **b)** using an external service to get the join address.
+A [sample](./src/main.zig) binary is provided to show a way to use the library. There are two ways to run the sample: **a)** specifying the join address manually, and **b)** using an external service to get the join address.
 
 To run locally using **a)**, try something like:
 
