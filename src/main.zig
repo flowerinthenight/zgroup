@@ -16,43 +16,12 @@ const UserData = struct {
     skip_callback: bool = false,
 };
 
-// We are using curl here as std.http.Client seems to not play well with this endpoint.
-// The "seegmed7" in the url is our API key. The allocator here is the allocator passed
-// to Fleet's init function. `addr`'s format is "ip:port", e.g. "127.0.0.1:8080", and
-// needs to be freed after use.
+// The allocator here is the allocator passed to Fleet's init function. `addr`'s
+// format is "ip:port", e.g. "127.0.0.1:8080", and needs to be freed after use.
 fn callback(allocator: std.mem.Allocator, data: ?*UserData, addr: []const u8) !void {
     defer allocator.free(addr);
     if (data.?.skip_callback) return;
-
-    const enc = std.base64.Base64Encoder.init(std.base64.url_safe_alphabet_chars, '=');
-    const buf = try allocator.alloc(u8, enc.calcSize(addr.len));
-    defer allocator.free(buf);
-    const out = enc.encode(buf, addr);
-
-    log.info("callback: leader={s}, set join info to {s}", .{ addr, out });
-
-    const url = try std.fmt.allocPrint(
-        allocator,
-        "https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/seegmed7/{s}/{s}",
-        .{ data.?.group, out },
-    );
-
-    const result = try std.process.Child.run(.{
-        .allocator = allocator,
-        .argv = &[_][]const u8{
-            "curl",
-            "-X",
-            "POST",
-            "-H",
-            "Content-Length: 1", // somehow, this works with this endpoint (required though)
-            url,
-        },
-    });
-
-    defer {
-        allocator.free(result.stdout);
-        allocator.free(result.stderr);
-    }
+    try setJoinAddress(allocator, data.?.group, addr);
 }
 
 const Fleet = zgroup.Fleet(UserData);
@@ -66,14 +35,15 @@ const Fleet = zgroup.Fleet(UserData);
 //
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
-    defer arena.deinit(); // destroy arena in one go
+    var aa = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer aa.deinit(); // destroy arena in one go
+    const arena = aa.allocator();
 
-    var args = try std.process.argsWithAllocator(arena.allocator());
-    var hm = std.AutoHashMap(usize, []const u8).init(arena.allocator());
+    var args = try std.process.argsWithAllocator(arena);
+    var hm = std.AutoHashMap(usize, []const u8).init(arena);
     var i: usize = 0;
     while (args.next()) |val| : (i += 1) {
-        const arg = try std.fmt.allocPrint(arena.allocator(), "{s}", .{val});
+        const arg = try std.fmt.allocPrint(arena, "{s}", .{val});
         try hm.put(i, arg);
     }
 
@@ -113,49 +83,33 @@ pub fn main() !void {
     defer fleet.deinit();
 
     i = 0;
+    var joined = false;
     var bo = backoff.Backoff{};
     while (true) : (i += 1) {
-        std.time.sleep(std.time.ns_per_s * 1);
+        if (joined)
+            std.time.sleep(std.time.ns_per_s * 1)
+        else
+            std.time.sleep(bo.pause());
 
-        // Delay for a bit before joining group.
-        if (i == 2) {
+        if (i > 1 and i < 100 and !joined) {
             switch (hm.count()) {
                 3 => {
                     // No join address in args. Try using a free discovery service.
                     var join_addr: []const u8 = "";
-                    for (0..10) |_| {
-                        const ja = try getJoinAddress(arena.allocator(), name);
-                        if (ja.len > 0) {
-                            join_addr = ja;
-                            break;
-                        } else std.time.sleep(bo.pause());
-                    }
+                    const ja = try getJoinAddress(arena, name);
+                    if (ja.len > 0) join_addr = ja else continue;
 
-                    log.info("join address found, addr={s}", .{join_addr});
+                    log.info("[{d}] join address found, addr={s}", .{ i, join_addr });
 
                     sep = std.mem.indexOf(u8, join_addr, ":").?;
-                    const join_ip = join_addr[0..sep];
-                    if (join_ip.len == 0) {
-                        log.err("invalid join address", .{});
-                        return;
-                    }
+                    const join_port = try std.fmt.parseUnsigned(u16, join_addr[sep + 1 ..], 10);
 
-                    var join_port: u16 = 0;
-                    if (join_addr[sep + 1 ..].len > 0) {
-                        join_port = try std.fmt.parseUnsigned(u16, join_addr[sep + 1 ..], 10);
-                    }
-
-                    for (0..3) |_| {
-                        var joined = false;
-                        fleet.join(
-                            name,
-                            join_ip,
-                            join_port,
-                            &joined,
-                        ) catch |err| log.err("join failed: {any}", .{err});
-
-                        if (joined) break else std.time.sleep(bo.pause());
-                    }
+                    fleet.join(
+                        name,
+                        join_addr[0..sep],
+                        join_port,
+                        &joined,
+                    ) catch |err| log.err("join failed: {any}", .{err});
                 },
                 4 => {
                     // Join address is provided. Skip callback.
@@ -169,22 +123,14 @@ pub fn main() !void {
                         return;
                     }
 
-                    var join_port: u16 = 0;
-                    if (join[sep + 1 ..].len > 0) {
-                        join_port = try std.fmt.parseUnsigned(u16, join[sep + 1 ..], 10);
-                    }
+                    const join_port = try std.fmt.parseUnsigned(u16, join[sep + 1 ..], 10);
 
-                    for (0..3) |_| {
-                        var joined = false;
-                        fleet.join(
-                            name,
-                            join_ip,
-                            join_port,
-                            &joined,
-                        ) catch |err| log.err("join failed: {any}", .{err});
-
-                        if (joined) break else std.time.sleep(bo.pause());
-                    }
+                    fleet.join(
+                        name,
+                        join_ip,
+                        join_port,
+                        &joined,
+                    ) catch |err| log.err("join failed: {any}", .{err});
                 },
                 else => {},
             }
@@ -208,6 +154,40 @@ pub fn main() !void {
 }
 
 // We are using curl here as std.http.Client seems to not play well with this endpoint.
+fn setJoinAddress(allocator: std.mem.Allocator, group: []const u8, addr: []const u8) !void {
+    const enc = std.base64.Base64Encoder.init(std.base64.url_safe_alphabet_chars, '=');
+    const buf = try allocator.alloc(u8, enc.calcSize(addr.len));
+    defer allocator.free(buf);
+    const out = enc.encode(buf, addr);
+
+    log.info("callback: leader={s}, set join info to {s}", .{ addr, out });
+
+    const url = try std.fmt.allocPrint(
+        allocator,
+        "https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/seegmed7/{s}/{s}",
+        .{ group, out },
+    );
+
+    defer allocator.free(url);
+    const result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{
+            "curl",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Length: 1", // somehow, this works with this endpoint (required though)
+            url,
+        },
+    });
+
+    defer {
+        allocator.free(result.stdout);
+        allocator.free(result.stderr);
+    }
+}
+
+// We are using curl here as std.http.Client seems to not play well with this endpoint.
 // The "seegmed7" in the url is our API key. We are passing an arena allocator here.
 fn getJoinAddress(allocator: std.mem.Allocator, group: []const u8) ![]u8 {
     const url = try std.fmt.allocPrint(
@@ -223,7 +203,7 @@ fn getJoinAddress(allocator: std.mem.Allocator, group: []const u8) ![]u8 {
 
     const out = std.mem.trim(u8, result.stdout, "\"");
     const dec = std.base64.Base64Decoder.init(std.base64.url_safe_alphabet_chars, '=');
-    const buf = try allocator.alloc(u8, try dec.calcSizeUpperBound(out.len));
+    const buf = try allocator.alloc(u8, try dec.calcSizeForSlice(out));
     try dec.decode(buf, out);
     return buf;
 }
