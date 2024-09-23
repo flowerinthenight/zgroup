@@ -31,7 +31,7 @@ $ ./zig-out/bin/zgroup group1 0.0.0.0:8083 0.0.0.0:8080
 # and so on...
 ```
 
-To run locally using **b)**, the sample binary uses a free service, [https://keyvalue.immanuel.co/](https://keyvalue.immanuel.co/), as a store for the join address. The library provides a simple, best-effort-basis leader election mechanism for this purpose by providing a callback with a join address information that can be stored on an external service.
+To run locally using **b)**, the sample binary uses a free service, [https://keyvalue.immanuel.co/](https://keyvalue.immanuel.co/), as a store for the join address. The library provides a simple, best-effort-basis leader election mechanism for this purpose by providing a callback with a join address information that you can store somewhere.
 
 ```sh
 # Build the sample binary:
