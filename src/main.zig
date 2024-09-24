@@ -104,7 +104,11 @@ pub fn main() !void {
                     log.info("[{d}] join address found, addr={s}", .{ i, join_addr });
 
                     sep = std.mem.indexOf(u8, join_addr, ":").?;
-                    const join_port = try std.fmt.parseUnsigned(u16, join_addr[sep + 1 ..], 10);
+                    const join_port = try std.fmt.parseUnsigned(
+                        u16,
+                        join_addr[sep + 1 ..],
+                        10,
+                    );
 
                     fleet.join(
                         name,
@@ -125,7 +129,11 @@ pub fn main() !void {
                         return;
                     }
 
-                    const join_port = try std.fmt.parseUnsigned(u16, join[sep + 1 ..], 10);
+                    const join_port = try std.fmt.parseUnsigned(
+                        u16,
+                        join[sep + 1 ..],
+                        10,
+                    );
 
                     fleet.join(
                         name,
