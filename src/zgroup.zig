@@ -673,7 +673,7 @@ pub fn Fleet(UserData: type) type {
                             }
                         },
                         else => {
-                            log.debug("[{d}] ack from {s}", .{ i, ping_key });
+                            // log.debug("[{d}] ack from {s}", .{ i, ping_key });
 
                             // TEST: start
                             // if (i > 0 and i <= 100 and @mod(i, 20) == 0) {
@@ -704,7 +704,11 @@ pub fn Fleet(UserData: type) type {
                         self.port,
                     });
 
-                    try self.callbacks.onLeader.?(self.allocator, self.callbacks.data, me);
+                    try self.callbacks.onLeader.?(
+                        self.allocator,
+                        self.callbacks.data,
+                        me,
+                    );
                 }
 
                 // TODO: At the moment, this causes intermittent crashes due to keys
@@ -716,7 +720,7 @@ pub fn Fleet(UserData: type) type {
                 const elapsed = tm.read();
                 if (elapsed < self.protocol_time) {
                     const left = self.protocol_time - elapsed;
-                    log.debug("[{d}] sleep for {any}", .{ i, std.fmt.fmtDuration(left) });
+                    // log.debug("[{d}] sleep for {any}", .{ i, std.fmt.fmtDuration(left) });
                     std.time.sleep(left);
                 }
             }
@@ -731,7 +735,6 @@ pub fn Fleet(UserData: type) type {
 
                 b: {
                     var tl = std.ArrayList([]const u8).init(allocator);
-                    defer tl.deinit();
 
                     {
                         self.members_mtx.lock();
