@@ -178,3 +178,13 @@ test "accesslen" {
     std.testing.allocator.free(buf);
     dbg("len={d}\n", .{buf.len});
 }
+
+test "defercont" {
+    var i: usize = 0;
+    while (true) : (i += 1) {
+        defer dbg("[{d}] defer here\n", .{i});
+        if (i == 10) continue;
+        if (i == 20) break;
+        defer dbg("[{d}] todo\n", .{i});
+    }
+}

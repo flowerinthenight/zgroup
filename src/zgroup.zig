@@ -26,6 +26,7 @@ pub fn Fleet(UserData: type) type {
         // Our per-member data. Key format is "ip:port", eg. "127.0.0.1:8080".
         members: std.StringHashMap(MemberData),
         members_mtx: std.Thread.Mutex = .{},
+        ref_keys: std.StringHashMap(void),
 
         // Intermediate member queue for round-robin pings and randomization.
         ping_queue: std.ArrayList([]const u8),
@@ -38,6 +39,8 @@ pub fn Fleet(UserData: type) type {
         leader_hb: std.time.Timer,
 
         callbacks: Callbacks,
+
+        ev_broadcast_ping: std.Thread.ResetEvent = .{},
 
         // SWIM protocol generic commands.
         const Command = enum(u8) {
@@ -102,6 +105,7 @@ pub fn Fleet(UserData: type) type {
         // Per-member context data.
         const MemberData = struct {
             state: MemberState = .alive,
+            age_suspected: std.time.Timer = undefined,
             age_faulty: std.time.Timer = undefined,
             incarnation: u64 = 0,
         };
@@ -179,6 +183,7 @@ pub fn Fleet(UserData: type) type {
                 .suspected_time = config.suspected_time,
                 .ping_req_k = config.ping_req_k,
                 .members = std.StringHashMap(MemberData).init(allocator),
+                .ref_keys = std.StringHashMap(void).init(allocator),
                 .ping_queue = std.ArrayList([]const u8).init(allocator),
                 .isd_queue = std.ArrayList(KeyInfo).init(allocator),
                 .leader_hb = try std.time.Timer.start(),
@@ -191,11 +196,12 @@ pub fn Fleet(UserData: type) type {
         pub fn deinit(self: *Self) void {
             log.debug("deinit:", .{});
 
-            // TODO:
-            // 1. Free keys in members.
-            // 2. See how to gracefuly exit threads.
+            // TODO: See how to gracefuly exit threads.
 
             self.members.deinit();
+            var it = self.ref_keys.iterator();
+            while (it.next()) |v| self.allocator.free(v.key_ptr.*);
+            self.ref_keys.deinit();
             self.ping_queue.deinit();
             self.isd_queue.deinit();
         }
@@ -215,6 +221,8 @@ pub fn Fleet(UserData: type) type {
             server.detach();
             const ticker = try std.Thread.spawn(.{}, Self.tick, .{self});
             ticker.detach();
+            const bp = try std.Thread.spawn(.{}, Self.broadcastPing, .{self});
+            bp.detach();
         }
 
         /// Ask an instance to join an existing group. `joined` will be
@@ -711,10 +719,7 @@ pub fn Fleet(UserData: type) type {
                     );
                 }
 
-                // TODO: At the moment, this causes intermittent crashes due to keys
-                // becoming freed. Needs more investigation. For now, we're not
-                // removing any keys; just keep them all with .faulty state.
-                // try self.removeFaultyMembers();
+                try self.removeFaultyMembers();
 
                 // Pause before the next tick.
                 const elapsed = tm.read();
@@ -753,7 +758,7 @@ pub fn Fleet(UserData: type) type {
                             try self.ping_queue.append(tl.items[0]);
                             break :b;
                         },
-                        else => {},
+                        else => self.ev_broadcast_ping.set(),
                     }
 
                     const seed = std.crypto.random.int(u64);
@@ -1029,6 +1034,39 @@ pub fn Fleet(UserData: type) type {
             }
         }
 
+        // We are responsible for freeing `bpl` and `args` itself. Uses internal allocator.
+        fn broadcastPing(self: *Self) !void {
+            while (true) {
+                self.ev_broadcast_ping.wait();
+                defer self.ev_broadcast_ping.reset();
+
+                if (true) continue;
+
+                var tm = try std.time.Timer.start();
+                defer log.debug("broadcastPing took {any}", .{std.fmt.fmtDuration(tm.read())});
+
+                var bl = std.ArrayList([]const u8).init(self.allocator);
+                defer bl.deinit();
+
+                {
+                    self.members_mtx.lock();
+                    defer self.members_mtx.unlock();
+                    var iter = self.members.iterator();
+                    while (iter.next()) |v| {
+                        if (v.value_ptr.state != .alive) continue;
+                        if (self.keyIsMe(v.key_ptr.*)) continue;
+                        try bl.append(v.key_ptr.*);
+                    }
+                }
+
+                if (bl.items.len == 0) continue;
+
+                log.debug("start broadcastPing for {d} nodes", .{bl.items.len});
+
+                for (bl.items) |v| _ = self.ping(v) catch false;
+            }
+        }
+
         // Helper function for internal one-shot send/recv. The same
         // message ptr is used for both request and response payloads.
         fn send(_: *Self, ip: []const u8, port: u16, msg: []u8) !void {
@@ -1293,11 +1331,18 @@ pub fn Fleet(UserData: type) type {
                 return;
             }
 
+            const nkey = try self.allocator.dupe(u8, key);
+
+            // Our copy of all member keys being allocated; to free later.
+            if (!self.ref_keys.contains(nkey)) try self.ref_keys.put(nkey, {});
+
             {
-                const nkey = try self.allocator.dupe(u8, key);
                 self.members_mtx.lock();
                 defer self.members_mtx.unlock();
-                try self.members.put(nkey, .{ .age_faulty = try std.time.Timer.start() });
+                try self.members.put(nkey, .{
+                    .age_suspected = try std.time.Timer.start(),
+                    .age_faulty = try std.time.Timer.start(),
+                });
             }
 
             try self.setMemberInfo(key, state, incarnation, true);
@@ -1355,6 +1400,8 @@ pub fn Fleet(UserData: type) type {
 
             p.?.state = in_state;
             p.?.incarnation = in_inc;
+
+            if (p.?.state == .suspected) p.?.age_suspected.reset();
             if (p.?.state == .faulty) p.?.age_faulty.reset();
         }
 
@@ -1390,7 +1437,7 @@ pub fn Fleet(UserData: type) type {
                 self.members_mtx.lock();
                 defer self.members_mtx.unlock();
                 var it = self.members.iterator();
-                const limit = self.protocol_time * 10; // TODO: expose
+                const limit = self.protocol_time; // TODO: expose
                 while (it.next()) |v| {
                     if (v.value_ptr.state != .faulty) continue;
                     if (v.value_ptr.age_faulty.read() > limit) {
@@ -1402,12 +1449,11 @@ pub fn Fleet(UserData: type) type {
             for (rml.items) |v| self.removeMember(v);
         }
 
-        // Frees the memory used for `key` as well.
+        // We don't free the key itself here; we will free through self.ref_keys.
         fn removeMember(self: *Self, key: []const u8) void {
             self.members_mtx.lock();
             defer self.members_mtx.unlock();
-            const fr = self.members.fetchRemove(key);
-            if (fr) |v| self.allocator.free(v.key);
+            _ = self.members.fetchRemove(key);
         }
 
         const MsgSection = enum {
