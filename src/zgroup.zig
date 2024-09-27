@@ -186,10 +186,10 @@ pub fn Fleet(UserData: type) type {
             port: u16 = 8080,
 
             /// Our SWIM protocol timeout duration.
-            protocol_time: u64 = std.time.ns_per_s * 2,
+            protocol_time: u64 = std.time.ns_per_ms * 100,
 
             /// Suspicion subprotocol timeout duration.
-            suspected_time: u64 = std.time.ns_per_s * 2,
+            suspected_time: u64 = std.time.ns_per_ms * 100,
 
             /// Number of members we will request to do indirect pings for us (agents).
             /// The only valid value at the moment is `1`.
@@ -899,7 +899,7 @@ pub fn Fleet(UserData: type) type {
             const random = prng.random();
             var i: usize = 0;
             while (true) : (i += 1) {
-                const skip = true;
+                const skip = false;
                 const n = self.getCounts();
                 if ((n[0] + n[1]) < 3 or skip) {
                     std.time.sleep(random.intRangeAtMost(
@@ -1042,6 +1042,8 @@ pub fn Fleet(UserData: type) type {
 
                                 self.setState(.follower);
                                 self.election_tm.reset();
+                                self.setVotes(0);
+                                self.voted_for = self.refkeys.getKeyPtr("0").?.*;
                             } else std.time.sleep(random.intRangeAtMost(
                                 u64,
                                 self.tm_min,
@@ -1183,7 +1185,7 @@ pub fn Fleet(UserData: type) type {
             max: usize,
         ) !std.ArrayList([]const u8) {
             var hm = std.AutoHashMap(u64, []const u8).init(allocator);
-            defer hm.deinit(); // noop
+            defer hm.deinit(); // noop since arena
 
             {
                 self.members_mtx.lock();
