@@ -1,3 +1,7 @@
+# NOTE: This is specific to my local dev environment.
+#
+# Usage: ./localbuild.sh {tag}, e.g. ./localbuild.sh v7
+#
 kubectl delete -f deployment.yaml
 docker build --rm -t zgroup .
 docker tag zgroup asia.gcr.io/mobingi-main/zgroup:$1
