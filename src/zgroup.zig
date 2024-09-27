@@ -888,7 +888,6 @@ pub fn Fleet(UserData: type) type {
         }
 
         fn leaderTick(self: *Self) !void {
-            // const name = std.mem.readVarInt(u64, self.name, .little);
             const buf = try self.allocator.alloc(u8, @sizeOf(Message));
             defer self.allocator.free(buf); // release buffer
 
@@ -900,9 +899,9 @@ pub fn Fleet(UserData: type) type {
             const random = prng.random();
             var i: usize = 0;
             while (true) : (i += 1) {
+                const skip = true;
                 const n = self.getCounts();
-                // if ((n[0] + n[1]) < 3 or true) {
-                if ((n[0] + n[1]) < 3) {
+                if ((n[0] + n[1]) < 3 or skip) {
                     std.time.sleep(random.intRangeAtMost(
                         u64,
                         self.tm_min,
@@ -1001,15 +1000,7 @@ pub fn Fleet(UserData: type) type {
                                 continue;
 
                             msg.leader_proto = self.getTerm();
-                            self.send(ip, port, buf, null) catch |err| {
-                                log.debug("[{d}:{d}] send (req4votes) failed: {any}", .{
-                                    i,
-                                    self.getTerm(),
-                                    err,
-                                });
-
-                                continue;
-                            };
+                            self.send(ip, port, buf, null) catch continue;
 
                             if (msg.cmd != .ack) continue;
 

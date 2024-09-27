@@ -56,4 +56,4 @@ dkms.conf
 .zig-cache/
 
 # Others
-local-k8s.yaml
+deployment.yaml
