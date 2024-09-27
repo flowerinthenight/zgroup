@@ -169,7 +169,7 @@ fn setJoinAddress(allocator: std.mem.Allocator, group: []const u8, addr: []const
     defer allocator.free(buf);
     const out = enc.encode(buf, addr);
 
-    log.info("callback: leader={s}, set join info to {s}", .{ addr, out });
+    log.info("callback: join={s}, set join info to {s}", .{ addr, out });
 
     const url = try std.fmt.allocPrint(
         allocator,

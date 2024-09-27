@@ -179,12 +179,21 @@ test "accesslen" {
     dbg("len={d}\n", .{buf.len});
 }
 
-test "defercont" {
-    var i: usize = 0;
-    while (true) : (i += 1) {
-        defer dbg("[{d}] defer here\n", .{i});
-        if (i == 10) continue;
-        if (i == 20) break;
-        defer dbg("[{d}] todo\n", .{i});
+test "comp" {
+    var empty = try std.fmt.allocPrint(std.testing.allocator, "", .{});
+    dbg("len_empty={d}\n", .{empty.len});
+    const str = try std.fmt.allocPrint(std.testing.allocator, "hello", .{});
+    defer std.testing.allocator.free(str);
+    empty = str;
+    dbg("len_empty={d}\n", .{empty.len});
+}
+
+test "defer" {
+    var b = false;
+    defer {
+        if (b) dbg("captured\n", .{});
     }
+
+    std.time.sleep(std.time.ns_per_s);
+    b = false;
 }

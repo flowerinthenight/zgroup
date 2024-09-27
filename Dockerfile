@@ -1,11 +1,9 @@
-FROM debian:bookworm
-RUN set -x && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y curl xz-utils ca-certificates && rm -rf /var/lib/apt/lists/*
+FROM kassany/alpine-ziglang:0.13.0
 WORKDIR /tmp/
 COPY src/ ./src/
 COPY build* ./
-RUN curl -O https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz && \
-xz --decompress zig-linux-x86_64-0.13.0.tar.xz && tar -xf zig-linux-x86_64-0.13.0.tar && \
-./zig-linux-x86_64-0.13.0/zig build -Doptimize=ReleaseFast --summary all
+# RUN zig build -Doptimize=ReleaseFast --summary all
+RUN zig build --summary all
 
 FROM debian:stable-slim
 RUN set -x && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates && rm -rf /var/lib/apt/lists/*
