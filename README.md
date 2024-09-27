@@ -1,3 +1,7 @@
+**NOTE**: Still in alpha stage. APIs may change.
+
+---
+
 [![main](https://github.com/flowerinthenight/zgroup/actions/workflows/main.yml/badge.svg)](https://github.com/flowerinthenight/zgroup/actions/workflows/main.yml)
 [![Docker Repository on Quay](https://quay.io/repository/flowerinthenight/zgroup/status "Docker Repository on Quay")](https://quay.io/repository/flowerinthenight/zgroup)
 
