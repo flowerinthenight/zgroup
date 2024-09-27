@@ -1,6 +1,7 @@
 # NOTE: This is specific to my local dev environment.
+# Usage:
 #
-# Usage: ./localbuild.sh {tag}, e.g. ./localbuild.sh v7
+#   ./localbuild.sh {tag}, e.g. ./localbuild.sh v7
 #
 kubectl delete -f deployment.yaml
 docker build --rm -t zgroup .
