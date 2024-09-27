@@ -436,7 +436,7 @@ pub fn Fleet(UserData: type) type {
                             msg.dst_port = msg.src_port;
                             try self.setMsgSrcToOwn(msg);
 
-                            log.debug("{s} is joining, inform leader '{s}'", .{ key, self.leader });
+                            log.debug("{s} is joining, inform leader [{s}]", .{ key, self.leader });
 
                             self.informLeaderOfJoin(buf) catch |err|
                                 log.debug("informLeaderOfJoin failed: {any}", .{err});
@@ -752,14 +752,14 @@ pub fn Fleet(UserData: type) type {
                     });
                 }
 
-                const counts = self.getCounts();
-                log.debug("[{d}] members: alive={d}, suspected={d}, faulty={d}, total={d}", .{
-                    i,
-                    counts[0],
-                    counts[1],
-                    counts[2],
-                    counts[3],
-                });
+                // const counts = self.getCounts();
+                // log.debug("[{d}] members: alive={d}, suspected={d}, faulty={d}, total={d}", .{
+                //     i,
+                //     counts[0],
+                //     counts[1],
+                //     counts[2],
+                //     counts[3],
+                // });
 
                 var key_ptr: ?[]const u8 = null;
                 const pt = try self.getPingTarget(arena);
@@ -901,7 +901,8 @@ pub fn Fleet(UserData: type) type {
             var i: usize = 0;
             while (true) : (i += 1) {
                 const n = self.getCounts();
-                if ((n[0] + n[1]) < 3 or true) {
+                // if ((n[0] + n[1]) < 3 or true) {
+                if ((n[0] + n[1]) < 3) {
                     std.time.sleep(random.intRangeAtMost(
                         u64,
                         self.tm_min,
@@ -921,7 +922,7 @@ pub fn Fleet(UserData: type) type {
                 defer aa.deinit(); // destroy arena in one go
                 const arena = aa.allocator();
 
-                log.debug("[{d}]", .{i}); // log separator
+                // log.debug("[{d}]", .{i}); // log separator
 
                 self.presetMessage(msg) catch {};
 
@@ -1050,7 +1051,11 @@ pub fn Fleet(UserData: type) type {
 
                                 self.setState(.follower);
                                 self.election_tm.reset();
-                            }
+                            } else std.time.sleep(random.intRangeAtMost(
+                                u64,
+                                self.tm_min,
+                                self.tm_max,
+                            ));
                         }
                     },
                     .leader => {
@@ -1058,11 +1063,10 @@ pub fn Fleet(UserData: type) type {
                         var deferlog = false;
                         defer {
                             if (deferlog) {
-                                log.debug("[{d}:{d}] leader here, hb took {any}, ldr={s}", .{
+                                log.debug("[{d}:{d}] leader here, hb took {any}", .{
                                     i,
                                     self.getTerm(),
                                     std.fmt.fmtDuration(tm.read()),
-                                    self.leader,
                                 });
                             }
                         }
@@ -1998,8 +2002,6 @@ pub fn Fleet(UserData: type) type {
                 defer self.lmtx.unlock();
                 break :b self.leader;
             };
-
-            log.debug("informLeaderOfJoin: current leader is '{s}'", .{leader});
 
             if (leader.len < 2) return;
 

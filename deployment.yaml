@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: zgroup
-        image: asia.gcr.io/mobingi-main/zgroup:v39
+        image: asia.gcr.io/mobingi-main/zgroup:v41
         command: ["/bin/sh"]
         args: ["-c", '/app/zgroup group1 ${K8S_MY_POD_IP}:8080']
         resources:
