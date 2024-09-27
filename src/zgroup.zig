@@ -186,10 +186,10 @@ pub fn Fleet(UserData: type) type {
             port: u16 = 8080,
 
             /// Our SWIM protocol timeout duration.
-            protocol_time: u64 = std.time.ns_per_ms * 100,
+            protocol_time: u64 = std.time.ns_per_ms * 500,
 
             /// Suspicion subprotocol timeout duration.
-            suspected_time: u64 = std.time.ns_per_ms * 100,
+            suspected_time: u64 = std.time.ns_per_ms * 500,
 
             /// Number of members we will request to do indirect pings for us (agents).
             /// The only valid value at the moment is `1`.
