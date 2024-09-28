@@ -15,7 +15,7 @@ One of zgroup's main goal is to be able to track clusters with sizes that can ch
 
 ### On leader election
 
-I also wanted some sort of leader election capability without depending on an external lock service. At the moment, `zgroup` uses [Raft](https://raft.github.io/raft.pdf)'s election algorithm subprotocol (without the log management) to achieve this. I should note that Raft's leader election algorithm rely on stable membership for it work properly, so zgroup's leader election is a best-effort basis only; split-brain can still happen while the cluster size is changing. Additional code guards are added to minimize split-brain scenarios but it's not completely eliminated. In my use-case (and testing), gradual cluster size changes are mostly stable, while huge size deltas are not. For example, a big, sudden jump from three nodes (zgroup's minimum size) to, say, a hundred, due to autoscaling, would cause split-brain.
+I also wanted some sort of leader election capability without depending on an external lock service. At the moment, `zgroup` uses [Raft](https://raft.github.io/raft.pdf)'s election algorithm sub-protocol (without the log management) to achieve this. I should note that Raft's leader election algorithm rely on stable membership for it work properly, so zgroup's leader election is a best-effort basis only; split-brain can still happen while the cluster size is changing. Additional code guards are added to minimize split-brain scenarios but it's not completely eliminated. In my use-case (and testing), gradual cluster size changes are mostly stable, while huge size deltas are not. For example, a big, sudden jump from three nodes (zgroup's minimum size) to, say, a hundred, due to autoscaling, would cause split-brain.
 
 ### Join address
 
