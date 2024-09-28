@@ -99,6 +99,7 @@ The tricky part of using **zgroup** is configuring the timeouts to optimize stat
 
 ## TODOs
 
+- [ ] - Provide callbacks for membership changes
 - [ ] - Provide an API to get the current leader
 - [ ] - Provide an interface for other processes (non-Zig users)
 
