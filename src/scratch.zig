@@ -188,12 +188,20 @@ test "comp" {
     dbg("len_empty={d}\n", .{empty.len});
 }
 
-test "defer" {
-    var b = false;
-    defer {
-        if (b) dbg("captured\n", .{});
+test "envmap" {
+    const allocator = std.testing.allocator;
+    var envmap = try std.process.getEnvMap(allocator);
+    defer envmap.deinit();
+
+    var iter = envmap.iterator();
+    while (iter.next()) |v| {
+        dbg("{s}={s}\n", .{ v.key_ptr.*, v.value_ptr.* });
     }
 
-    std.time.sleep(std.time.ns_per_s);
-    b = false;
+    const path = envmap.getPtr("PATH");
+    if (path) |v| {
+        dbg("PATH={s}\n", .{v.*});
+    } else {
+        dbg("no PATH\n", .{});
+    }
 }

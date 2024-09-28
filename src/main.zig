@@ -12,6 +12,7 @@ pub const std_options = .{
 };
 
 const UserData = struct {
+    prefix: []const u8,
     group: []const u8,
     skip_callback: bool = false,
 };
@@ -21,7 +22,7 @@ const UserData = struct {
 fn onJoinAddr(allocator: std.mem.Allocator, data: ?*UserData, addr: []const u8) !void {
     defer allocator.free(addr);
     if (data.?.skip_callback) return;
-    try setJoinAddress(allocator, data.?.group, addr);
+    try setJoinAddress(allocator, data.?.prefix, data.?.group, addr);
 }
 
 const Fleet = zgroup.Fleet(UserData);
@@ -57,9 +58,22 @@ pub fn main() !void {
         log.info("args[{d}]: {s}", .{ v.key_ptr.*, v.value_ptr.* });
     }
 
+    var envmap = try std.process.getEnvMap(arena);
+    if (hm.count() == 3) {
+        const jp = envmap.getPtr("ZGROUP_JOIN_PREFIX");
+        if (jp) |_| {} else {
+            log.err("no $ZGROUP_JOIN_PREFIX envvar found", .{});
+            return;
+        }
+    }
+
     const name = hm.getEntry(1).?.value_ptr.*;
 
-    var data = UserData{ .group = name };
+    var data = UserData{
+        .prefix = envmap.getPtr("ZGROUP_JOIN_PREFIX").?.*,
+        .group = name,
+    };
+
     const callbacks = Fleet.Callbacks{
         .data = &data,
         .onJoinAddr = onJoinAddr,
@@ -96,7 +110,12 @@ pub fn main() !void {
                 3 => {
                     // No join address in args. Try using a free discovery service.
                     var join_addr: []const u8 = "";
-                    const ja = try getJoinAddress(arena, name);
+                    const ja = try getJoinAddress(
+                        arena,
+                        envmap.getPtr("ZGROUP_JOIN_PREFIX").?.*,
+                        name,
+                    );
+
                     if (ja.len > 0) join_addr = ja else continue;
 
                     log.info("[{d}] join address found, addr={s}", .{ i, join_addr });
@@ -155,21 +174,26 @@ pub fn main() !void {
 
 // We are using curl here as std.http.Client seems to not play well with this endpoint.
 // The "seegmed7" in the url is our API key.
-fn setJoinAddress(allocator: std.mem.Allocator, group: []const u8, addr: []const u8) !void {
+fn setJoinAddress(
+    allocator: std.mem.Allocator,
+    prefix: []const u8,
+    group: []const u8,
+    addr: []const u8,
+) !void {
     const enc = std.base64.Base64Encoder.init(std.base64.url_safe_alphabet_chars, '=');
     const buf = try allocator.alloc(u8, enc.calcSize(addr.len));
     defer allocator.free(buf);
     const out = enc.encode(buf, addr);
-
-    log.info("callback: join={s}, set join info to {s}", .{ addr, out });
-
     const url = try std.fmt.allocPrint(
         allocator,
-        "https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/seegmed7/{s}/{s}",
-        .{ group, out },
+        "https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/seegmed7/{s}-{s}/{s}",
+        .{ prefix, group, out },
     );
 
     defer allocator.free(url);
+
+    log.info("callback: setJoinAddress: url={s}", .{url});
+
     const result = try std.process.Child.run(.{
         .allocator = allocator,
         .argv = &[_][]const u8{
@@ -190,12 +214,14 @@ fn setJoinAddress(allocator: std.mem.Allocator, group: []const u8, addr: []const
 
 // We are using curl here as std.http.Client seems to not play well with this endpoint.
 // The "seegmed7" in the url is our API key. We are passing an arena allocator here.
-fn getJoinAddress(allocator: std.mem.Allocator, group: []const u8) ![]u8 {
+fn getJoinAddress(allocator: std.mem.Allocator, prefix: []const u8, group: []const u8) ![]u8 {
     const url = try std.fmt.allocPrint(
         allocator,
-        "https://keyvalue.immanuel.co/api/KeyVal/GetValue/seegmed7/{s}",
-        .{group},
+        "https://keyvalue.immanuel.co/api/KeyVal/GetValue/seegmed7/{s}-{s}",
+        .{ prefix, group },
     );
+
+    log.info("callback: getJoinAddress: url={s}", .{url});
 
     const result = try std.process.Child.run(.{
         .allocator = allocator,

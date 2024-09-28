@@ -36,6 +36,8 @@ spec:
               fieldPath: status.podIP
         - name: GET_HOSTS_FROM
           value: dns
+        - name: ZGROUP_JOIN_PREFIX
+          value: "c06a9044-856d-4583-8095-c57d37272b05"
         ports:
         - containerPort: 8080
 
