@@ -18,7 +18,7 @@ const UserData = struct {
 
 // The allocator here is the allocator passed to Fleet's init function. `addr`'s
 // format is "ip:port", e.g. "127.0.0.1:8080", and needs to be freed after use.
-fn callback(allocator: std.mem.Allocator, data: ?*UserData, addr: []const u8) !void {
+fn onJoinAddr(allocator: std.mem.Allocator, data: ?*UserData, addr: []const u8) !void {
     defer allocator.free(addr);
     if (data.?.skip_callback) return;
     try setJoinAddress(allocator, data.?.group, addr);
@@ -62,8 +62,8 @@ pub fn main() !void {
     var data = UserData{ .group = name };
     const callbacks = Fleet.Callbacks{
         .data = &data,
-        .onLeader = callback,
-        .on_leader_every = 50,
+        .onJoinAddr = onJoinAddr,
+        .on_join_every = 50,
     };
 
     var member = hm.getEntry(2).?.value_ptr.*;
@@ -143,12 +143,6 @@ pub fn main() !void {
                 else => {},
             }
         }
-
-        // if (i > 0 and @mod(i, 5) == 0) b: {
-        //     const ldr = try fleet.getLeader(gpa.allocator()) orelse break :b;
-        //     defer gpa.allocator().free(ldr);
-        //     log.info("--- leader={s}", .{ldr});
-        // }
 
         if (i > 0 and @mod(i, 10) == 0) {
             const members = try fleet.getMembers(gpa.allocator());

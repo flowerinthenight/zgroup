@@ -19,8 +19,8 @@ pub fn Fleet(UserData: type) type {
         name: []const u8,
         ip: []const u8,
         port: u16,
-        protocol_time: u64,
-        suspected_time: u64,
+        proto_time: u64,
+        suspect_time: u64,
         ping_req_k: u32,
 
         // Our per-member data. Key format is "ip:port", eg. "127.0.0.1:8080".
@@ -50,20 +50,20 @@ pub fn Fleet(UserData: type) type {
         callbacks: Callbacks,
 
         // Raft-inspired leader election.
-        lmtx: std.Thread.Mutex = .{},
-        allowed: bool = false,
-        allowed_tm: std.time.Timer,
-        term: u64 = 0,
-        state: NodeState = .follower,
+        elex_mtx: std.Thread.Mutex = .{},
+        elex_join: bool = false,
+        elex_join_tm: std.time.Timer,
+        elex_term: u64 = 0,
+        elex_state: ElectionState = .follower,
         votes: u32 = 0,
         voted_for: []const u8,
-        leader: []const u8,
-        election_tm: std.time.Timer,
+        elex_tm: std.time.Timer,
         candidate_tm: std.time.Timer,
-        tm_min: u64 = std.time.ns_per_ms * 2000,
-        tm_max: u64 = std.time.ns_per_ms * 3000,
+        elex_tm_min: u64 = std.time.ns_per_ms * 2000,
+        elex_tm_max: u64 = std.time.ns_per_ms * 3000,
+        leader: []const u8,
 
-        const NodeState = enum(u8) {
+        const ElectionState = enum(u8) {
             follower,
             candidate,
             leader,
@@ -91,8 +91,8 @@ pub fn Fleet(UserData: type) type {
             confirm_faulty,
         };
 
-        // Possible member states.
-        const MemberState = enum(u8) {
+        // Possible member liveness states.
+        const Liveness = enum(u8) {
             alive,
             suspected,
             faulty,
@@ -100,7 +100,7 @@ pub fn Fleet(UserData: type) type {
 
         const KeyInfo = struct {
             key: []const u8,
-            state: MemberState,
+            liveness: Liveness,
             incarnation: u64 = 0,
             isd_cmd: IsdCommand = .noop,
         };
@@ -108,33 +108,39 @@ pub fn Fleet(UserData: type) type {
         // Our generic UDP comms/protocol payload.
         const Message = packed struct {
             name: u64 = 0,
+
             // Section for ping, ping_req, ack, nack.
             cmd: Command = .noop,
             src_ip: u32 = 0,
             src_port: u16 = 0,
-            src_state: MemberState = .alive,
+            src_state: Liveness = .alive,
             src_incarnation: u64 = 0,
             dst_cmd: IsdCommand = .noop,
             dst_ip: u32 = 0,
             dst_port: u16 = 0,
-            dst_state: MemberState = .alive,
+            dst_state: Liveness = .alive,
             dst_incarnation: u64 = 0,
+
             // Infection-style dissemination section.
             isd_cmd: IsdCommand = .noop,
             isd_ip: u32 = 0,
             isd_port: u16 = 0,
-            isd_state: MemberState = .alive,
+            isd_state: Liveness = .alive,
             isd_incarnation: u64 = 0,
-            // For leader election protocol.
+
+            // Used for multiple subprotocols explained below:
+            //
+            // 1) For determining the highest node (for join).
+            //
             // Format:
             //   |----- cmd -----|-- port (u16) --|----------- IP address (u32) ----------|
             //   0000000000000011.1111111111111111.0000000011111111111111111111111111111111
-            leader_proto: u64 = 0,
+            extra: u64 = 0,
         };
 
         // Per-member context data.
         const MemberData = struct {
-            state: MemberState = .alive,
+            liveness: Liveness = .alive,
             age_suspected: std.time.Timer = undefined,
             age_faulty: std.time.Timer = undefined,
             incarnation: u64 = 0,
@@ -152,25 +158,18 @@ pub fn Fleet(UserData: type) type {
             /// Optional context data; to be passed back to the callback function(s).
             data: ?*UserData,
 
-            /// Optional callback for the leader. Note that the internal leader election
-            /// is best-effort only, and is provided to the caller for the purpose of
-            /// providing an option for setting up facilities for other nodes to join the
-            /// group. The address format is "ip:port", e.g. "127.0.0.1:8080".
+            /// Optional callback for the join address. This is provided as an option to
+            /// provide a join address for new nodes to join in.
             ///
             /// For example, you might want to setup a discovery service (e.g. K/V store)
-            /// where you will store the address from the callback during invocation.
-            /// Other joining nodes can then use the store to query the join address.
-            ///
-            /// Best-effort here means that there might be a brief moment where there
-            /// will be multiple leaders calling the callback from multiple nodes during
-            /// leader transitions; under normal conditions, there should only be one
-            /// leader calling the callback function.
-            onLeader: ?*const fn (std.mem.Allocator, ?*UserData, []const u8) anyerror!void,
+            /// where you will store the join address from this callback. Other joining
+            /// nodes can then use the store to query the join address.
+            onJoinAddr: ?*const fn (std.mem.Allocator, ?*UserData, []const u8) anyerror!void,
 
-            /// If > 0, callback will be called every `protocol_time * val`. For example,
-            /// if your protocol time is 2s and this value is 10, `onLeader` will be
-            /// called every 20s. Default (0) means every `protocol_time`; same as 1.
-            on_leader_every: u64 = 0,
+            /// If > 0, `onJoinAddr` callback will be called every `proto_time * val`. For
+            /// example, if your proto_time is 2s and this value is 10, `onJoinAddr` will
+            /// be called every 20s. Default (0) means every `proto_time`; same as 1.
+            on_join_every: u64 = 0,
         };
 
         /// Config for init().
@@ -186,10 +185,10 @@ pub fn Fleet(UserData: type) type {
             port: u16 = 8080,
 
             /// Our SWIM protocol timeout duration.
-            protocol_time: u64 = std.time.ns_per_ms * 500,
+            proto_time: u64 = std.time.ns_per_ms * 500,
 
             /// Suspicion subprotocol timeout duration.
-            suspected_time: u64 = std.time.ns_per_ms * 500,
+            suspect_time: u64 = std.time.ns_per_ms * 500,
 
             /// Number of members we will request to do indirect pings for us (agents).
             /// The only valid value at the moment is `1`.
@@ -210,8 +209,8 @@ pub fn Fleet(UserData: type) type {
                 .name = if (config.name.len > 8) config.name[0..8] else config.name,
                 .ip = config.ip,
                 .port = config.port,
-                .protocol_time = config.protocol_time,
-                .suspected_time = config.suspected_time,
+                .proto_time = config.proto_time,
+                .suspect_time = config.suspect_time,
                 .ping_req_k = config.ping_req_k,
                 .members = std.StringHashMap(MemberData).init(allocator),
                 .refkeys = std.StringHashMap(void).init(allocator),
@@ -221,9 +220,9 @@ pub fn Fleet(UserData: type) type {
                 .callbacks = config.callbacks,
                 .leader = try std.fmt.allocPrint(allocator, "", .{}),
                 .voted_for = try std.fmt.allocPrint(allocator, "", .{}),
-                .election_tm = try std.time.Timer.start(),
+                .elex_tm = try std.time.Timer.start(),
                 .candidate_tm = try std.time.Timer.start(),
-                .allowed_tm = try std.time.Timer.start(),
+                .elex_join_tm = try std.time.Timer.start(),
             };
         }
 
@@ -254,7 +253,7 @@ pub fn Fleet(UserData: type) type {
             defer self.allocator.free(me);
             _ = try self.ensureKeyRef(me);
             try self.upsertMember(me, .alive, 0, true);
-            self.election_tm.reset();
+            self.elex_tm.reset();
             _ = try self.ensureKeyRef("0"); // dummy
 
             const server = try std.Thread.spawn(.{}, Self.listen, .{self});
@@ -304,7 +303,7 @@ pub fn Fleet(UserData: type) type {
                         });
 
                         try self.upsertMember(key, .alive, 0, true);
-                        self.allowed_tm.reset();
+                        self.elex_join_tm.reset();
                         joined.* = true;
 
                         log.info("joined via {s}:{any}, name={s}", .{
@@ -330,7 +329,7 @@ pub fn Fleet(UserData: type) type {
                 defer self.members_mtx.unlock();
                 var it = self.members.iterator();
                 while (it.next()) |v| {
-                    if (v.value_ptr.state == .faulty) continue;
+                    if (v.value_ptr.liveness == .faulty) continue;
                     try tmp.append(v.key_ptr.*);
                 }
             }
@@ -345,32 +344,6 @@ pub fn Fleet(UserData: type) type {
             }
 
             return out;
-        }
-
-        /// Returns the current leader of the group/cluster. Caller owns the returned
-        /// buffer. The returned buffer format is "ip:port", e.g. "127.0.0.1:8080".
-        pub fn getLeader(self: *Self, allocator: std.mem.Allocator) !?[]const u8 {
-            const n = self.getCounts();
-            if ((n[0] + n[1]) < 2) return try std.fmt.allocPrint(allocator, "{s}:{d}", .{
-                self.ip,
-                self.port,
-            });
-
-            var bo = backoff.Backoff{};
-            for (0..3) |_| {
-                if (self.leader_hb.read() < self.protocol_time) break;
-                std.time.sleep(bo.pause());
-            } else return null;
-
-            const al = try self.getAssumedLeader();
-            const ipb = std.mem.asBytes(&al[0]);
-            return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}:{d}", .{
-                ipb[0],
-                ipb[1],
-                ipb[2],
-                ipb[3],
-                al[1],
-            });
         }
 
         // Run internal UDP server for comms.
@@ -493,16 +466,16 @@ pub fn Fleet(UserData: type) type {
                             if (msg.isd_cmd == .noop) {
                                 const n = self.getCounts();
                                 if ((n[0] + n[1]) < msg.isd_incarnation) {
-                                    self.allowed_tm.reset();
+                                    self.elex_tm.reset();
                                     @atomicStore(
                                         bool,
-                                        &self.allowed,
+                                        &self.elex_join,
                                         false,
                                         std.builtin.AtomicOrder.seq_cst,
                                     );
                                 } else @atomicStore(
                                     bool,
-                                    &self.allowed,
+                                    &self.elex_join,
                                     true,
                                     std.builtin.AtomicOrder.seq_cst,
                                 );
@@ -516,13 +489,13 @@ pub fn Fleet(UserData: type) type {
                             try self.setMsgDstAndIsd(arena, msg, &excludes);
 
                             // Handle leader protocol.
-                            var ipm = msg.leader_proto & 0x00000000FFFFFFFF;
-                            var portm = (msg.leader_proto & 0x0000FFFF00000000) >> 32;
-                            const cmdm: LeaderCmd = @enumFromInt((msg.leader_proto &
+                            var ipm = msg.extra & 0x00000000FFFFFFFF;
+                            var portm = (msg.extra & 0x0000FFFF00000000) >> 32;
+                            const cmdm: LeaderCmd = @enumFromInt((msg.extra &
                                 0xF000000000000000) >> 60);
 
                             if (cmdm == .heartbeat) b: {
-                                const al = try self.getAssumedLeader();
+                                const al = try self.getHighestNode();
                                 if ((al[0] + al[1]) <= (ipm + portm)) {
                                     _ = self.leader_hb.lap();
                                     break :b;
@@ -531,7 +504,7 @@ pub fn Fleet(UserData: type) type {
                                 const hb: u64 = @intFromEnum(LeaderCmd.invalidate);
                                 ipm = al[0] & 0x00000000FFFFFFFF;
                                 portm = (al[1] << 32) & 0x0000FFFF00000000;
-                                msg.leader_proto = (hb << 60) | ipm | portm;
+                                msg.extra = (hb << 60) | ipm | portm;
                             }
                         }
 
@@ -626,7 +599,7 @@ pub fn Fleet(UserData: type) type {
                     .heartbeat => {
                         msg.cmd = .nack;
                         const term = self.getTerm();
-                        if (msg.leader_proto >= term) {
+                        if (msg.extra >= term) {
                             msg.cmd = .ack;
                             const tc = self.getTermAndN(msg);
 
@@ -634,7 +607,7 @@ pub fn Fleet(UserData: type) type {
 
                             self.setTerm(tc[0]);
                             self.setVotes(0);
-                            self.election_tm.reset();
+                            self.elex_tm.reset();
                             self.setState(.follower);
 
                             const src = try keyFromIpPort(arena, msg.src_ip, msg.src_port);
@@ -643,8 +616,8 @@ pub fn Fleet(UserData: type) type {
                             // log.debug("[{d}] received heartbeat from {s}", .{ i, lkey });
 
                             {
-                                self.lmtx.lock();
-                                defer self.lmtx.unlock();
+                                self.elex_mtx.lock();
+                                defer self.elex_mtx.unlock();
                                 self.leader = lkey;
                                 self.voted_for = self.refkeys.getKeyPtr("0").?.*;
                             }
@@ -663,8 +636,8 @@ pub fn Fleet(UserData: type) type {
                         var voted = false;
 
                         {
-                            self.lmtx.lock();
-                            defer self.lmtx.unlock();
+                            self.elex_mtx.lock();
+                            defer self.elex_mtx.unlock();
                             if (self.voted_for.len > 1) voted = true;
                         }
 
@@ -673,9 +646,9 @@ pub fn Fleet(UserData: type) type {
                         // log.debug("req4votes: my_term={d}, in_term={d}", .{ term, msg.leader_proto });
                         // log.debug("req4votes: voted_for={s}, voted={any}", .{ self.voted_for, voted });
 
-                        if (msg.leader_proto >= term and !voted and self.getState() != .leader) {
+                        if (msg.extra >= term and !voted and self.getState() != .leader) {
                             msg.cmd = .ack;
-                            self.setTerm(msg.leader_proto);
+                            self.setTerm(msg.extra);
 
                             const src = try keyFromIpPort(arena, msg.src_ip, msg.src_port);
                             const vkey = try self.ensureKeyRef(src);
@@ -683,8 +656,8 @@ pub fn Fleet(UserData: type) type {
                             // log.debug("[{d}] received req4votes from {s}", .{ i, vkey });
 
                             {
-                                self.lmtx.lock();
-                                defer self.lmtx.unlock();
+                                self.elex_mtx.lock();
+                                defer self.elex_mtx.unlock();
                                 self.voted_for = vkey;
                                 log.debug("req4votes: voted_for={s}", .{self.voted_for});
                             }
@@ -733,8 +706,8 @@ pub fn Fleet(UserData: type) type {
                     var it = self.members.iterator();
                     while (it.next()) |v| {
                         if (!self.keyIsMe(v.key_ptr.*)) continue;
-                        if (v.value_ptr.state == .alive) break;
-                        v.value_ptr.state = .alive;
+                        if (v.value_ptr.liveness == .alive) break;
+                        v.value_ptr.liveness = .alive;
                         me_key = v.key_ptr.*;
                         me_inc = v.value_ptr.incarnation + 1;
                         break;
@@ -746,7 +719,7 @@ pub fn Fleet(UserData: type) type {
                     defer self.isd_mtx.unlock();
                     try self.isd_queue.append(.{
                         .key = mk,
-                        .state = .alive,
+                        .liveness = .alive,
                         .isd_cmd = .confirm_alive,
                         .incarnation = me_inc,
                     });
@@ -840,18 +813,18 @@ pub fn Fleet(UserData: type) type {
                 }
 
                 // Setup leader callback. Mainly for joining.
-                var mod = self.callbacks.on_leader_every;
+                var mod = self.callbacks.on_join_every;
                 if (mod == 0) mod = 1;
                 if (i > 0 and @mod(i, mod) == 0) b: {
-                    const al = self.getAssumedLeader() catch break :b;
+                    const al = self.getHighestNode() catch break :b;
                     if (!al[2]) break :b;
-                    if (self.callbacks.onLeader) |_| {} else break :b;
+                    if (self.callbacks.onJoinAddr) |_| {} else break :b;
                     const me = try std.fmt.allocPrint(self.allocator, "{s}:{d}", .{
                         self.ip,
                         self.port,
                     });
 
-                    try self.callbacks.onLeader.?(
+                    try self.callbacks.onJoinAddr.?(
                         self.allocator,
                         self.callbacks.data,
                         me,
@@ -869,8 +842,8 @@ pub fn Fleet(UserData: type) type {
                     var it = self.members.iterator();
                     while (it.next()) |v| {
                         if (self.keyIsMe(v.key_ptr.*)) continue;
-                        if (v.value_ptr.state != .suspected) continue;
-                        if (v.value_ptr.age_suspected.read() < self.suspected_time) continue;
+                        if (v.value_ptr.liveness != .suspected) continue;
+                        if (v.value_ptr.age_suspected.read() < self.suspect_time) continue;
                         try s2f.append(v.key_ptr.*);
                     }
                 }
@@ -879,8 +852,8 @@ pub fn Fleet(UserData: type) type {
 
                 // Pause before the next tick.
                 const elapsed = tm.read();
-                if (elapsed < self.protocol_time) {
-                    const left = self.protocol_time - elapsed;
+                if (elapsed < self.proto_time) {
+                    const left = self.proto_time - elapsed;
                     // log.debug("[{d}] sleep for {any}", .{ i, std.fmt.fmtDuration(left) });
                     std.time.sleep(left);
                 }
@@ -904,8 +877,8 @@ pub fn Fleet(UserData: type) type {
                 if ((n[0] + n[1]) < 3 or skip) {
                     std.time.sleep(random.intRangeAtMost(
                         u64,
-                        self.tm_min,
-                        self.tm_max,
+                        self.elex_tm_min,
+                        self.elex_tm_max,
                     ));
 
                     continue;
@@ -913,7 +886,7 @@ pub fn Fleet(UserData: type) type {
 
                 const allowed = @atomicLoad(
                     bool,
-                    &self.allowed,
+                    &self.elex_join,
                     std.builtin.AtomicOrder.seq_cst,
                 );
 
@@ -927,10 +900,10 @@ pub fn Fleet(UserData: type) type {
 
                 switch (self.getState()) {
                     .follower => {
-                        if (self.allowed_tm.read() >= self.protocol_time * (n[0] + n[1])) {
+                        if (self.elex_join_tm.read() >= self.proto_time * (n[0] + n[1])) {
                             @atomicStore(
                                 bool,
-                                &self.allowed,
+                                &self.elex_join,
                                 true,
                                 std.builtin.AtomicOrder.seq_cst,
                             );
@@ -938,8 +911,8 @@ pub fn Fleet(UserData: type) type {
 
                         const rand = random.intRangeAtMost(
                             u64,
-                            self.tm_min,
-                            self.tm_max,
+                            self.elex_tm_min,
+                            self.elex_tm_max,
                         );
 
                         if (!allowed) {
@@ -947,7 +920,7 @@ pub fn Fleet(UserData: type) type {
                             continue;
                         }
 
-                        if (self.election_tm.read() <= self.tm_min) {
+                        if (self.elex_tm.read() <= self.elex_tm_min) {
                             std.time.sleep(rand);
                             continue;
                         }
@@ -966,7 +939,7 @@ pub fn Fleet(UserData: type) type {
                             defer self.members_mtx.unlock();
                             var iter = self.members.iterator();
                             while (iter.next()) |v| {
-                                if (v.value_ptr.state != .alive) continue;
+                                if (v.value_ptr.liveness != .alive) continue;
                                 if (self.keyIsMe(v.key_ptr.*)) continue;
                                 try bl.append(v.key_ptr.*);
                             }
@@ -975,8 +948,8 @@ pub fn Fleet(UserData: type) type {
                         if (bl.items.len == 0) {
                             std.time.sleep(random.intRangeAtMost(
                                 u64,
-                                self.tm_min,
-                                self.tm_max,
+                                self.elex_tm_min,
+                                self.elex_tm_max,
                             ));
 
                             continue;
@@ -999,7 +972,7 @@ pub fn Fleet(UserData: type) type {
                             const port = std.fmt.parseUnsigned(u16, k[sep + 1 ..], 10) catch
                                 continue;
 
-                            msg.leader_proto = self.getTerm();
+                            msg.extra = self.getTerm();
                             self.send(ip, port, buf, null) catch continue;
 
                             if (msg.cmd != .ack) continue;
@@ -1028,7 +1001,7 @@ pub fn Fleet(UserData: type) type {
                         }
 
                         if (!to_leader) {
-                            if (self.candidate_tm.read() > self.tm_min) {
+                            if (self.candidate_tm.read() > self.elex_tm_min) {
                                 log.debug("[{d}:{d}] lost the election, back to follower", .{
                                     i,
                                     self.getTerm(),
@@ -1036,18 +1009,18 @@ pub fn Fleet(UserData: type) type {
 
                                 std.time.sleep(random.intRangeAtMost(
                                     u64,
-                                    self.tm_min,
-                                    self.tm_max,
+                                    self.elex_tm_min,
+                                    self.elex_tm_max,
                                 ));
 
                                 self.setState(.follower);
-                                self.election_tm.reset();
+                                self.elex_tm.reset();
                                 self.setVotes(0);
                                 self.voted_for = self.refkeys.getKeyPtr("0").?.*;
                             } else std.time.sleep(random.intRangeAtMost(
                                 u64,
-                                self.tm_min,
-                                self.tm_max,
+                                self.elex_tm_min,
+                                self.elex_tm_max,
                             ));
                         }
                     },
@@ -1072,7 +1045,7 @@ pub fn Fleet(UserData: type) type {
                             defer self.members_mtx.unlock();
                             var iter = self.members.iterator();
                             while (iter.next()) |v| {
-                                if (v.value_ptr.state != .alive) continue;
+                                if (v.value_ptr.liveness != .alive) continue;
                                 if (self.keyIsMe(v.key_ptr.*)) continue;
                                 try bl.append(v.key_ptr.*);
                             }
@@ -1081,8 +1054,8 @@ pub fn Fleet(UserData: type) type {
                         if (bl.items.len == 0) {
                             std.time.sleep(random.intRangeAtMost(
                                 u64,
-                                self.tm_min,
-                                self.tm_max,
+                                self.elex_tm_min,
+                                self.elex_tm_max,
                             ));
 
                             continue;
@@ -1103,7 +1076,7 @@ pub fn Fleet(UserData: type) type {
                             const port = std.fmt.parseUnsigned(u16, k[sep + 1 ..], 10) catch
                                 continue;
 
-                            msg.leader_proto = self.getTerm();
+                            msg.extra = self.getTerm();
                             self.setTermAndN(msg);
                             self.send(ip, port, buf, 50_000) catch |err| {
                                 log.debug("[{d}:{d}] send (heartbeat) failed: {any}", .{
@@ -1138,7 +1111,7 @@ pub fn Fleet(UserData: type) type {
                         defer self.members_mtx.unlock();
                         var iter = self.members.iterator();
                         while (iter.next()) |v| {
-                            if (v.value_ptr.state == .faulty) continue;
+                            if (v.value_ptr.liveness == .faulty) continue;
                             if (self.keyIsMe(v.key_ptr.*)) continue;
                             try tl.append(v.key_ptr.*);
                         }
@@ -1192,7 +1165,7 @@ pub fn Fleet(UserData: type) type {
                 defer self.members_mtx.unlock();
                 var iter = self.members.iterator();
                 while (iter.next()) |v| {
-                    if (v.value_ptr.state == .faulty) continue;
+                    if (v.value_ptr.liveness == .faulty) continue;
                     if (self.keyIsMe(v.key_ptr.*)) continue;
                     var eql: usize = 0;
                     for (excludes) |x| {
@@ -1378,7 +1351,7 @@ pub fn Fleet(UserData: type) type {
             try self.send(ip, port, buf, null);
 
             // Handle leader protocol (ingress).
-            const cmdm: LeaderCmd = @enumFromInt((msg.leader_proto &
+            const cmdm: LeaderCmd = @enumFromInt((msg.extra &
                 0xF000000000000000) >> 60);
 
             if (cmdm != .invalidate) _ = self.leader_hb.lap();
@@ -1446,7 +1419,7 @@ pub fn Fleet(UserData: type) type {
                 // The dst_* section is the target of our ping.
                 try setMsgSection(msg, .dst, .{
                     .key = args.dst,
-                    .state = .suspected, // will not be used
+                    .liveness = .suspected, // will not be used
                     .incarnation = 0, // will not be used
                 });
 
@@ -1565,7 +1538,7 @@ pub fn Fleet(UserData: type) type {
 
                 try suspected.append(.{
                     .key = key,
-                    .state = .suspected,
+                    .liveness = .suspected,
                     .isd_cmd = .confirm_alive,
                     .incarnation = ptr.?.incarnation,
                 });
@@ -1671,7 +1644,7 @@ pub fn Fleet(UserData: type) type {
             defer self.members_mtx.unlock();
             var it = self.members.iterator();
             while (it.next()) |v| {
-                switch (v.value_ptr.state) {
+                switch (v.value_ptr.liveness) {
                     .alive => n[0] += 1,
                     .suspected => n[1] += 1,
                     .faulty => n[2] += 1,
@@ -1693,7 +1666,7 @@ pub fn Fleet(UserData: type) type {
             if (ptr) |_| {} else return null;
             return .{
                 .key = key,
-                .state = ptr.?.state,
+                .liveness = ptr.?.liveness,
                 .incarnation = ptr.?.incarnation,
             };
         }
@@ -1702,7 +1675,7 @@ pub fn Fleet(UserData: type) type {
         // [0] - leader's (highest) ip in int format
         // [1] - leader's (highest) port number
         // [2] - true if we are the leader
-        fn getAssumedLeader(self: *Self) !std.meta.Tuple(&.{ u32, u64, bool }) {
+        fn getHighestNode(self: *Self) !std.meta.Tuple(&.{ u32, u64, bool }) {
             var ipl: u32 = 0;
             var portl: u16 = 0;
             var me = false;
@@ -1710,7 +1683,7 @@ pub fn Fleet(UserData: type) type {
             defer self.members_mtx.unlock();
             var it = self.members.iterator();
             while (it.next()) |v| {
-                if (v.value_ptr.state == .faulty) continue;
+                if (v.value_ptr.liveness == .faulty) continue;
                 const sep = std.mem.indexOf(u8, v.key_ptr.*, ":") orelse continue;
                 const ip = v.key_ptr.*[0..sep];
                 const port = try std.fmt.parseUnsigned(u16, v.key_ptr.*[sep + 1 ..], 10);
@@ -1729,15 +1702,15 @@ pub fn Fleet(UserData: type) type {
             const n = self.getCounts();
             const lim = n[0] + n[1];
             if (lim < 2) return;
-            const al = try self.getAssumedLeader();
+            const al = try self.getHighestNode();
             const hb: u64 = @intFromEnum(LeaderCmd.heartbeat);
             const ipl: u32 = al[0] & 0x00000000FFFFFFFF;
             const portl: u64 = (al[1] << 32) & 0x0000FFFF00000000;
-            msg.leader_proto = (hb << 60) | ipl | portl;
+            msg.extra = (hb << 60) | ipl | portl;
         }
 
         fn setLeaderProtoRecv(self: *Self, msg: *Message) void {
-            const cmdm: LeaderCmd = @enumFromInt((msg.leader_proto &
+            const cmdm: LeaderCmd = @enumFromInt((msg.extra &
                 0xF000000000000000) >> 60);
             if (cmdm != .invalidate) _ = self.leader_hb.lap();
         }
@@ -1745,17 +1718,17 @@ pub fn Fleet(UserData: type) type {
         fn setTermAndN(self: *Self, msg: *Message) void {
             const n = self.getCounts();
             const total = n[0] + n[1];
-            const term = @atomicLoad(u64, &self.term, std.builtin.AtomicOrder.seq_cst);
+            const term = @atomicLoad(u64, &self.elex_term, std.builtin.AtomicOrder.seq_cst);
             const mterm: u64 = term & 0x0000FFFFFFFFFFFF;
             const mcount: u64 = (total << 48) & 0xFFFF000000000000;
-            msg.leader_proto = mcount | mterm;
+            msg.extra = mcount | mterm;
         }
 
         // [0] - term
         // [1] - count
         fn getTermAndN(_: *Self, msg: *Message) std.meta.Tuple(&.{ u64, u64 }) {
-            const term = msg.leader_proto & 0x0000FFFFFFFFFFFF;
-            const count = (msg.leader_proto & 0xFFFF000000000000) >> 48;
+            const term = msg.extra & 0x0000FFFFFFFFFFFF;
+            const count = (msg.extra & 0xFFFF000000000000) >> 48;
             return .{ term, count };
         }
 
@@ -1768,7 +1741,7 @@ pub fn Fleet(UserData: type) type {
             msg.dst_state = .alive;
             msg.isd_cmd = .noop;
             msg.isd_state = .alive;
-            msg.leader_proto = 0;
+            msg.extra = 0;
         }
 
         fn setMsgSrcToOwn(self: *Self, msg: *Message) !void {
@@ -1776,7 +1749,7 @@ pub fn Fleet(UserData: type) type {
             defer self.allocator.free(me);
             try setMsgSection(msg, .src, .{
                 .key = me,
-                .state = .alive,
+                .liveness = .alive,
                 .incarnation = try self.getIncarnation(),
             });
         }
@@ -1787,7 +1760,7 @@ pub fn Fleet(UserData: type) type {
         fn upsertMember(
             self: *Self,
             key: []const u8,
-            state: ?MemberState,
+            state: ?Liveness,
             incarnation: ?u64,
             force: bool,
         ) !void {
@@ -1849,7 +1822,7 @@ pub fn Fleet(UserData: type) type {
         fn setMemberInfo(
             self: *Self,
             key: []const u8,
-            state: ?MemberState,
+            state: ?Liveness,
             incarnation: ?u64,
             force: bool,
         ) !void {
@@ -1859,19 +1832,19 @@ pub fn Fleet(UserData: type) type {
             if (p) |_| {} else return;
 
             var apply = false;
-            var in_state: MemberState = .alive;
+            var in_state: Liveness = .alive;
             var in_inc: u64 = p.?.incarnation;
             if (state) |s| in_state = s else return;
             if (incarnation) |inc| in_inc = inc;
 
             if (in_state == .alive) {
-                if (p.?.state == .suspected and in_inc > p.?.incarnation) apply = true;
-                if (p.?.state == .alive and in_inc > p.?.incarnation) apply = true;
+                if (p.?.liveness == .suspected and in_inc > p.?.incarnation) apply = true;
+                if (p.?.liveness == .alive and in_inc > p.?.incarnation) apply = true;
             }
 
             if (in_state == .suspected) {
-                if (p.?.state == .suspected and in_inc > p.?.incarnation) apply = true;
-                if (p.?.state == .alive and in_inc >= p.?.incarnation) apply = true;
+                if (p.?.liveness == .suspected and in_inc > p.?.incarnation) apply = true;
+                if (p.?.liveness == .alive and in_inc >= p.?.incarnation) apply = true;
             }
 
             if (in_state == .faulty) apply = true;
@@ -1879,13 +1852,13 @@ pub fn Fleet(UserData: type) type {
 
             if (!apply) return;
 
-            if (p.?.state == .faulty and in_state == .alive) p.?.incarnation = 0;
+            if (p.?.liveness == .faulty and in_state == .alive) p.?.incarnation = 0;
 
-            p.?.state = in_state;
+            p.?.liveness = in_state;
             p.?.incarnation = in_inc;
 
-            if (p.?.state == .suspected and in_state != .suspected) p.?.age_suspected.reset();
-            if (p.?.state == .faulty and in_state != .faulty) p.?.age_faulty.reset();
+            if (p.?.liveness == .suspected and in_state != .suspected) p.?.age_suspected.reset();
+            if (p.?.liveness == .faulty and in_state != .faulty) p.?.age_faulty.reset();
         }
 
         // const SuspectToFaulty = struct {
@@ -1920,9 +1893,9 @@ pub fn Fleet(UserData: type) type {
                 self.members_mtx.lock();
                 defer self.members_mtx.unlock();
                 var it = self.members.iterator();
-                const limit = self.protocol_time; // TODO: expose
+                const limit = self.proto_time; // TODO: expose
                 while (it.next()) |v| {
-                    if (v.value_ptr.state != .faulty) continue;
+                    if (v.value_ptr.liveness != .faulty) continue;
                     if (v.value_ptr.age_faulty.read() > limit) {
                         try rml.append(v.key_ptr.*);
                     }
@@ -1957,42 +1930,42 @@ pub fn Fleet(UserData: type) type {
                 .src => {
                     msg.src_ip = addr.in.sa.addr;
                     msg.src_port = port;
-                    msg.src_state = info.state;
+                    msg.src_state = info.liveness;
                     msg.src_incarnation = info.incarnation;
                 },
                 .dst => {
                     msg.dst_ip = addr.in.sa.addr;
                     msg.dst_port = port;
-                    msg.dst_state = info.state;
+                    msg.dst_state = info.liveness;
                     msg.dst_incarnation = info.incarnation;
                 },
                 .isd => {
                     msg.isd_ip = addr.in.sa.addr;
                     msg.isd_port = port;
-                    msg.isd_state = info.state;
+                    msg.isd_state = info.liveness;
                     msg.isd_incarnation = info.incarnation;
                 },
             }
         }
 
-        fn getState(self: *Self) NodeState {
-            self.lmtx.lock();
-            defer self.lmtx.unlock();
-            return self.state;
+        fn getState(self: *Self) ElectionState {
+            self.elex_mtx.lock();
+            defer self.elex_mtx.unlock();
+            return self.elex_state;
         }
 
-        fn setState(self: *Self, state: NodeState) void {
-            self.lmtx.lock();
-            defer self.lmtx.unlock();
-            self.state = state;
+        fn setState(self: *Self, state: ElectionState) void {
+            self.elex_mtx.lock();
+            defer self.elex_mtx.unlock();
+            self.elex_state = state;
         }
 
         // Best-effort basis only. `msg` should already contain the new join info
         // in the dst_* portion, as well as it's source info.
         fn informLeaderOfJoin(self: *Self, msg: []u8) !void {
             const leader = b: {
-                self.lmtx.lock();
-                defer self.lmtx.unlock();
+                self.elex_mtx.lock();
+                defer self.elex_mtx.unlock();
                 break :b self.leader;
             };
 
@@ -2008,7 +1981,7 @@ pub fn Fleet(UserData: type) type {
         fn getTerm(self: *Self) u64 {
             return @atomicLoad(
                 u64,
-                &self.term,
+                &self.elex_term,
                 std.builtin.AtomicOrder.seq_cst,
             );
         }
@@ -2016,7 +1989,7 @@ pub fn Fleet(UserData: type) type {
         fn setTerm(self: *Self, term: u64) void {
             @atomicStore(
                 u64,
-                &self.term,
+                &self.elex_term,
                 term,
                 std.builtin.AtomicOrder.seq_cst,
             );
@@ -2025,7 +1998,7 @@ pub fn Fleet(UserData: type) type {
         fn incTermAndGet(self: *Self) u64 {
             _ = @atomicRmw(
                 u64,
-                &self.term,
+                &self.elex_term,
                 std.builtin.AtomicRmwOp.Add,
                 1,
                 std.builtin.AtomicOrder.seq_cst,
