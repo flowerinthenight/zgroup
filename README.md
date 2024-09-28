@@ -19,7 +19,7 @@ I also wanted some sort of leader election capability without depending on an ex
 
 ### Join address
 
-To be done.
+For a node to join an existing cluster, it needs a joining address. While zgroup exposes a `join()` function for this, it also provides a callback mechanism, providing callers with a join address. This address can then be stored to an external store for the other nodes to use. Internally, zgroup uses the node with the highest IP(v4) address in the group.
 
 ## Sample binary
 
@@ -80,6 +80,8 @@ $ ./zig-out/bin/zgroup group1 0.0.0.0:8083
 
 # and so on...
 ```
+
+## Getting the list of members
 
 To get the current members of the group, you can try something like:
 
