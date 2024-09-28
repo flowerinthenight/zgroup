@@ -83,7 +83,6 @@ pub fn main() !void {
     var member = hm.getEntry(2).?.value_ptr.*;
     var sep = std.mem.indexOf(u8, member, ":").?;
 
-    // This sample sets both protocol time and suspicion time to 2s.
     var cfg = Fleet.Config{
         .name = name,
         .ip = member[0..sep],
@@ -93,7 +92,7 @@ pub fn main() !void {
     cfg.port = try std.fmt.parseUnsigned(u16, member[sep + 1 ..], 10);
 
     var fleet = try Fleet.init(gpa.allocator(), &cfg);
-    try fleet.run();
+    try fleet.run(); // actual run, join later
     defer fleet.deinit();
 
     i = 0;
