@@ -89,9 +89,13 @@ A sample Kubernetes [deployment file](./k8s.yaml) is also provided. Before deplo
 ```sh
 # Generate UUID:
 $ uuidgen
-5e0194b3-6fc3-45c2-8c3b-4218bd36758c
+{output}
 
 # Update the 'value' part with your output.
+  ...
+  - name: ZGROUP_JOIN_PREFIX
+    value: "{output}"
+  ...
 
 # Deploy to Kubernetes:
 $ kubectl create -f k8s.yaml
