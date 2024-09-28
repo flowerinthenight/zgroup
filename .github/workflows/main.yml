@@ -38,5 +38,8 @@ jobs:
         run: |
           echo "todo: release here"
           zig build -Doptimize=ReleaseFast --summary all
-          ls -laF zig-out/bin/
-          gh release list
+          cp zig-out/bin/zgroup ./
+          ls -laF
+          tar czvf zgroup-${GITHUB_REF_NAME}.tar.gz zgroup
+          ls -laF
+          gh release create ${GITHUB_REF_NAME} ./*.tar.gz --generate-notes
