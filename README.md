@@ -70,16 +70,20 @@ e9112971-e523-4374-b844-f79c805b9ae8
 #
 
 # Run the first process:
-$ ZGROUP_JOIN_PREFIX=e9112971-e523-4374-b844-f79c805b9ae8 ./zig-out/bin/zgroup group1 0.0.0.0:8080
+$ ZGROUP_JOIN_PREFIX=e9112971-e523-4374-b844-f79c805b9ae8 ./zig-out/bin/zgroup \
+  group1 0.0.0.0:8080
 
 # Add a second node (different terminal):
-$ ZGROUP_JOIN_PREFIX=e9112971-e523-4374-b844-f79c805b9ae8 ./zig-out/bin/zgroup group1 0.0.0.0:8081
+$ ZGROUP_JOIN_PREFIX=e9112971-e523-4374-b844-f79c805b9ae8 ./zig-out/bin/zgroup \
+  group1 0.0.0.0:8081
 
 # Add a third node (different terminal):
-$ ZGROUP_JOIN_PREFIX=e9112971-e523-4374-b844-f79c805b9ae8 ./zig-out/bin/zgroup group1 0.0.0.0:8082
+$ ZGROUP_JOIN_PREFIX=e9112971-e523-4374-b844-f79c805b9ae8 ./zig-out/bin/zgroup \
+  group1 0.0.0.0:8082
 
 # Add a fourth node (different terminal):
-$ ZGROUP_JOIN_PREFIX=e9112971-e523-4374-b844-f79c805b9ae8 ./zig-out/bin/zgroup group1 0.0.0.0:8083
+$ ZGROUP_JOIN_PREFIX=e9112971-e523-4374-b844-f79c805b9ae8 ./zig-out/bin/zgroup \
+  group1 0.0.0.0:8083
 
 # and so on...
 ```
