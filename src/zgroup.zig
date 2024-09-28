@@ -1,8 +1,11 @@
 //! zgroup is a library that can manage cluster membership and member failure detection.
-//! It is based on the SWIM Protocol, specifically, SWIM+Inf.+Sus. variant of the gossip
-//! protocol. Linux-only for now.
+//! It is based on the SWIM Protocol and Raft's leader election algorithm sub-protocol
+//! (without the log management).
 //!
-//!   Reference: https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf
+//! References:
+//!
+//!   https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf
+//!   https://raft.github.io/raft.pdf
 //!
 const std = @import("std");
 const backoff = @import("zbackoff");
