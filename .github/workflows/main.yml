@@ -36,7 +36,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
-          zig build -Doptimize=ReleaseFast --target x86_64-linux --summary all
+          zig build -Doptimize=ReleaseFast -Dtarget=x86_64-linux --summary all
           cp zig-out/bin/zgroup ./
           tar czvf zgroup-${GITHUB_REF_NAME}-x86_64-linux.tar.gz zgroup
           gh release create ${GITHUB_REF_NAME} ./*.tar.gz --generate-notes
