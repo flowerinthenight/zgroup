@@ -30,4 +30,4 @@ jobs:
         run: |
           echo "todo: release here"
           zig build -Doptimize=ReleaseFast --summary all
-          ls -laF
+          ls -laF zig-out/
