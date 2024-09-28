@@ -9,13 +9,23 @@ on:
     branches: [ "main" ]
 
 jobs:
-  test:
+  build:
     name: Build
     if: "!contains(github.event.commits[0].message, 'ci skip')"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: mlugg/setup-zig@v1
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v1
         with:
           version: 0.13.0
-      - run: zig build test
+
+      - name: Build
+        run: zig build test
+
+      - name: Release from tags
+        if: startsWith(github.event.ref, 'refs/tags/v')
+        run: |
+          echo "todo: release here"

@@ -40,6 +40,7 @@ pub fn main() !void {
     defer aa.deinit(); // destroy arena in one go
     const arena = aa.allocator();
 
+    // Collect process args to a map.
     var args = try std.process.argsWithAllocator(arena);
     var hm = std.AutoHashMap(usize, []const u8).init(arena);
     var i: usize = 0;
@@ -58,6 +59,7 @@ pub fn main() !void {
         log.info("args[{d}]: {s}", .{ v.key_ptr.*, v.value_ptr.* });
     }
 
+    // Required: so we can have our own unique URL in the free service.
     var envmap = try std.process.getEnvMap(arena);
     if (hm.count() == 3) {
         const jp = envmap.getPtr("ZGROUP_JOIN_PREFIX");
