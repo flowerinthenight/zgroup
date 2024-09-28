@@ -60,8 +60,9 @@ To run locally using **b)**, the sample binary uses a free service, [https://key
 # Build the sample binary:
 $ zig build --summary all
 
-# The sample code embeds the API key, with the group name as key.
-# I suggest you change that.
+# Generate UUID:
+$ uuidgen
+e9112971-e523-4374-b844-f79c805b9ae8
 
 # Run the 1st process. The expected args look like:
 #
@@ -69,16 +70,16 @@ $ zig build --summary all
 #
 
 # Run the first process:
-$ ./zig-out/bin/zgroup group1 0.0.0.0:8080
+$ ZGROUP_JOIN_PREFIX=e9112971-e523-4374-b844-f79c805b9ae8 ./zig-out/bin/zgroup group1 0.0.0.0:8080
 
 # Add a second node (different terminal):
-$ ./zig-out/bin/zgroup group1 0.0.0.0:8081
+$ ZGROUP_JOIN_PREFIX=e9112971-e523-4374-b844-f79c805b9ae8 ./zig-out/bin/zgroup group1 0.0.0.0:8081
 
 # Add a third node (different terminal):
-$ ./zig-out/bin/zgroup group1 0.0.0.0:8082
+$ ZGROUP_JOIN_PREFIX=e9112971-e523-4374-b844-f79c805b9ae8 ./zig-out/bin/zgroup group1 0.0.0.0:8082
 
 # Add a fourth node (different terminal):
-$ ./zig-out/bin/zgroup group1 0.0.0.0:8083
+$ ZGROUP_JOIN_PREFIX=e9112971-e523-4374-b844-f79c805b9ae8 ./zig-out/bin/zgroup group1 0.0.0.0:8083
 
 # and so on...
 ```
