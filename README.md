@@ -96,3 +96,10 @@ for (members.items, 0..) |v, i| {
 ```
 
 The tricky part of using **zgroup** is configuring the timeouts to optimize state dissemination and convergence. The current implementation was only tested within a local network.
+
+## TODOs
+
+- [ ] - Provide an API to get the current leader
+- [ ] - Provide an interface for other processes (non-Zig users)
+
+PR's are welcome.
