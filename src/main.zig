@@ -53,8 +53,8 @@ pub fn main() !void {
     }
 
     var iter = hm.iterator();
-    while (iter.next()) |entry| {
-        log.info("{any}, {s}", .{ entry.key_ptr.*, entry.value_ptr.* });
+    while (iter.next()) |v| {
+        log.info("args[{d}]: {s}", .{ v.key_ptr.*, v.value_ptr.* });
     }
 
     const name = hm.getEntry(1).?.value_ptr.*;
