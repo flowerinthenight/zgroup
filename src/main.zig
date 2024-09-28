@@ -55,9 +55,8 @@ pub fn main() !void {
     }
 
     var iter = hm.iterator();
-    while (iter.next()) |v| {
+    while (iter.next()) |v|
         log.info("args[{d}]: {s}", .{ v.key_ptr.*, v.value_ptr.* });
-    }
 
     // Required: so we can have our own unique URL in the free service.
     var envmap = try std.process.getEnvMap(arena);
@@ -72,7 +71,12 @@ pub fn main() !void {
     const name = hm.getEntry(1).?.value_ptr.*;
 
     var data = UserData{
-        .prefix = envmap.getPtr("ZGROUP_JOIN_PREFIX").?.*,
+        .prefix = b: {
+            const jp = envmap.getPtr("ZGROUP_JOIN_PREFIX");
+            if (jp) |v| break :b v.* else {
+                break :b try std.fmt.allocPrint(arena, "", .{});
+            }
+        },
         .group = name,
     };
 

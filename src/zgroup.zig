@@ -695,40 +695,12 @@ pub fn Fleet(UserData: type) type {
         fn tick(self: *Self) !void {
             var i: usize = 0;
             while (true) : (i += 1) {
+                var tm = try std.time.Timer.start();
                 var aa = std.heap.ArenaAllocator.init(self.allocator);
                 defer aa.deinit(); // destroy arena in one go
                 const arena = aa.allocator();
 
                 // log.debug("[{d}]", .{i}); // log separator
-
-                var tm = try std.time.Timer.start();
-                // var me_key: ?[]const u8 = null;
-                // var me_inc: u64 = 0;
-
-                // {
-                //     self.members_mtx.lock();
-                //     defer self.members_mtx.unlock();
-                //     var it = self.members.iterator();
-                //     while (it.next()) |v| {
-                //         if (!self.keyIsMe(v.key_ptr.*)) continue;
-                //         if (v.value_ptr.liveness == .alive) break;
-                //         v.value_ptr.liveness = .alive;
-                //         me_key = v.key_ptr.*;
-                //         me_inc = v.value_ptr.incarnation + 1;
-                //         break;
-                //     }
-                // }
-
-                // if (me_key) |mk| {
-                //     self.isd_mtx.lock();
-                //     defer self.isd_mtx.unlock();
-                //     try self.isd_queue.append(.{
-                //         .key = mk,
-                //         .liveness = .alive,
-                //         .isd_cmd = .confirm_alive,
-                //         .incarnation = me_inc,
-                //     });
-                // }
 
                 // const counts = self.getCounts();
                 // log.debug("[{d}] members: alive={d}, suspected={d}, faulty={d}, total={d}", .{
@@ -875,6 +847,9 @@ pub fn Fleet(UserData: type) type {
             const seed = std.crypto.random.int(u64);
             var prng = std.rand.DefaultPrng.init(seed);
             const random = prng.random();
+
+            var ldr_last_sweep: bool = false;
+
             var i: usize = 0;
             while (true) : (i += 1) {
                 const skip = false;
@@ -898,8 +873,6 @@ pub fn Fleet(UserData: type) type {
                 var aa = std.heap.ArenaAllocator.init(self.allocator);
                 defer aa.deinit(); // destroy arena in one go
                 const arena = aa.allocator();
-
-                // log.debug("[{d}]", .{i}); // log separator
 
                 self.presetMessage(msg) catch {};
 
@@ -1076,6 +1049,12 @@ pub fn Fleet(UserData: type) type {
                             });
                         }
 
+                        var latencies = std.ArrayList(u64).init(self.allocator);
+                        defer latencies.deinit();
+
+                        var fails: usize = 0;
+                        var ltm = try std.time.Timer.start();
+
                         for (bl.items) |k| {
                             deferlog = true;
                             msg.cmd = .heartbeat;
@@ -1087,6 +1066,8 @@ pub fn Fleet(UserData: type) type {
 
                             msg.proto1 = self.getTerm();
                             self.setTermAndN(msg);
+
+                            ltm.reset();
                             self.send(ip, port, buf, 50_000) catch |err| {
                                 log.debug("[{d}:{d}] send (heartbeat) failed: {any}", .{
                                     i,
@@ -1094,9 +1075,27 @@ pub fn Fleet(UserData: type) type {
                                     err,
                                 });
 
+                                fails += 1;
                                 continue;
                             };
+
+                            try latencies.append(ltm.read());
                         }
+
+                        if (fails == 0) {
+                            var total: usize = 0;
+                            for (latencies.items) |v| total += v;
+                            const avg = total / latencies.items.len;
+
+                            if (@mod(i, 20) == 0)
+                                log.debug("[{d}:{d}] latency avg: {any}", .{
+                                    i,
+                                    self.getTerm(),
+                                    std.fmt.fmtDuration(avg),
+                                });
+                        }
+
+                        ldr_last_sweep = if (fails == 0) true else false;
 
                         // TODO: This needs to be very short.
                         std.time.sleep(std.time.ns_per_ms * 50);
@@ -1215,22 +1214,22 @@ pub fn Fleet(UserData: type) type {
 
         // Caller is responsible for releasing the returned memory.
         // We are passing in an arena allocator here.
-        fn getIsdInfo(
-            self: *Self,
-            allocator: std.mem.Allocator,
-            max: usize,
-        ) !std.ArrayList(KeyInfo) {
-            var out = std.ArrayList(KeyInfo).init(allocator);
-            self.isd_mtx.lock();
-            defer self.isd_mtx.unlock();
-            while (true) {
-                const pop = self.isd_queue.popOrNull();
-                if (pop) |v| try out.append(v) else break;
-                if (out.items.len >= max) break;
-            }
+        // fn getIsdInfo(
+        //     self: *Self,
+        //     allocator: std.mem.Allocator,
+        //     max: usize,
+        // ) !std.ArrayList(KeyInfo) {
+        //     var out = std.ArrayList(KeyInfo).init(allocator);
+        //     self.isd_mtx.lock();
+        //     defer self.isd_mtx.unlock();
+        //     while (true) {
+        //         const pop = self.isd_queue.popOrNull();
+        //         if (pop) |v| try out.append(v) else break;
+        //         if (out.items.len >= max) break;
+        //     }
 
-            return out;
-        }
+        //     return out;
+        // }
 
         // Setup both dst_* and isd_* sections of the payload.
         // We are passing in an arena allocator here.
