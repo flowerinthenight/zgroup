@@ -102,5 +102,6 @@ The tricky part of using **zgroup** is configuring the timeouts to optimize stat
 - [ ] - Provide callbacks for membership changes
 - [ ] - Provide an API to get the current leader
 - [ ] - Provide an interface for other processes (non-Zig users)
+- [ ] - Use multicast (if available) for the join address
 
 PR's are welcome.
