@@ -29,3 +29,5 @@ jobs:
         if: startsWith(github.event.ref, 'refs/tags/v')
         run: |
           echo "todo: release here"
+          zig build -Doptimize=ReleaseFast --summary all
+          ls -laF
