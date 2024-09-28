@@ -83,6 +83,22 @@ $ ./zig-out/bin/zgroup group1 0.0.0.0:8083
 # and so on...
 ```
 
+A sample Kubernetes [deployment file](./k8s.yaml) is also provided. Before deploying though, make sure to update the `ZGROUP_JOIN_PREFIX` environment variable, like so:
+
+```sh
+# Generate UUID:
+$ uuidgen
+5e0194b3-6fc3-45c2-8c3b-4218bd36758c
+
+# Update the 'value' part with your output.
+
+# Deploy to Kubernetes:
+$ kubectl create -f k8s.yaml
+
+# You will notice some initial errors in the logs.
+# Wait for a while before the K/V store is updated.
+```
+
 ## Getting the list of members
 
 To get the current members of the group, you can try something like:
