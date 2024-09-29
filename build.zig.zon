@@ -3,8 +3,8 @@
     .version = "0.0.0",
     .dependencies = .{
         .zbackoff = .{
-            .url = "https://github.com/flowerinthenight/zbackoff/archive/v0.1.0.tar.gz",
-            .hash = "1220d916c94ec121cbad861f1fcab113a25c4590466d29319996cfba2a663008c5fd",
+            .url = "https://github.com/flowerinthenight/zbackoff/archive/v0.1.2.tar.gz",
+            .hash = "12203e5df269c9b911d4328cd1a94eb2ef31482332af71efb2f2f6e1b3d695d763c9",
         },
     },
     .paths = .{
