@@ -687,7 +687,7 @@ pub fn Fleet(UserData: type) type {
             }
         }
 
-        // Drives the SWIM protocol forward. Running on a separate thread.
+        // Drives the SWIM protocol forward. Runs on a separate thread.
         fn swimTick(self: *Self) !void {
             var i: usize = 0;
             while (true) : (i += 1) {
@@ -831,7 +831,7 @@ pub fn Fleet(UserData: type) type {
             }
         }
 
-        // Drives the Raft-based leader election forward. Running on a separate thread.
+        // Drives the Raft-based leader election forward. Runs on a separate thread.
         fn leaderElectionTick(self: *Self) !void {
             const buf = try self.allocator.alloc(u8, @sizeOf(Message));
             defer self.allocator.free(buf); // release buffer
