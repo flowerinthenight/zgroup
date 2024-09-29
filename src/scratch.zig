@@ -171,12 +171,14 @@ test "returnblock" {
     dbg("should not be here\n", .{});
 }
 
-test "accesslen" {
-    const i: usize = 1;
-    const buf = try std.fmt.allocPrint(std.testing.allocator, "hello world {d}", .{i});
-    dbg("len={d}\n", .{buf.len});
-    std.testing.allocator.free(buf);
-    dbg("len={d}\n", .{buf.len});
+test "shift" {
+    // 0xFFFF.FFFF.FFFF.FFFF
+    const on = 1 << 63;
+    dbg("{X}\n", .{on});
+    const val = (on & 0x8000000000000000) >> 63;
+    dbg("{d}\n", .{val});
+    const min = 21 << 31;
+    dbg("{d}\n", .{(min & 0x7FFFFFFF80000000) >> 31});
 }
 
 test "comp" {

@@ -134,15 +134,30 @@ pub fn Fleet(UserData: type) type {
 
             // Used for multiple subprotocols explained below:
             //
-            // 1) For determining the highest node (for join).
+            // 1) For determining the highest node (for join) during SWIM pings.
             // Format:
-            //   |----- cmd -----|-- port (u16) --|------- IP address (u32) ------|
-            //   0000000000000011.1111111111111111.11111111111111111111111111111111
+            //   |----- cmd ----| |- port (u16) -| |------- IP address (u32) ------|
+            //   0000000000000011.1111111111111111.1111111111111111.1111111111111111
+            //
+            // 2) Term and node count during leader heartbeats.
+            // Format:
+            //   |---- count ---| |----------------- term (u48) -------------------|
+            //   1111111111111111.1111111111111111.1111111111111111.1111111111111111
             proto1: u64 = 0,
 
             // Used for multiple subprotocols explained below:
             //
             // 1) For informing the sender's member count during SWIM pings.
+            // Format: the full 64 bits represents the value.
+            //
+            // 2) Min and max election timeouts during leader heartbeats, in ms.
+            // Format:
+            //
+            //   1-MSB:  1 -> field is valid, 0 -> skip
+            //   62-LSB: 31 bits each for min/max
+            //
+            //   |x|---------- min (u31) ----------||---------- max (u31) ---------|
+            //   1011111111111111.1111111111111111.1111111111111111.1111111111111111
             proto2: u64 = 0,
         };
 
@@ -603,13 +618,9 @@ pub fn Fleet(UserData: type) type {
                     },
                     .heartbeat => {
                         msg.cmd = .nack;
-                        const term = self.getTerm();
-                        if (msg.proto1 >= term) {
+                        const tc = self.getTermAndN(msg);
+                        if (tc[0] >= self.getTerm()) {
                             msg.cmd = .ack;
-                            const tc = self.getTermAndN(msg);
-
-                            // log.debug("[{d}] received heartbeat, set term={d} ", .{ i, tc[0] });
-
                             self.setTerm(tc[0]);
                             self.setVotes(0);
                             self.elex_tm.reset();
@@ -618,13 +629,39 @@ pub fn Fleet(UserData: type) type {
                             const src = try keyFromIpPort(arena, msg.src_ip, msg.src_port);
                             const lkey = try self.ensureKeyRef(src);
 
-                            // log.debug("[{d}] received heartbeat from {s}", .{ i, lkey });
-
                             {
                                 self.elex_mtx.lock();
                                 defer self.elex_mtx.unlock();
                                 self.leader = lkey;
                                 self.voted_for = self.refkeys.getKeyPtr("0").?.*;
+                            }
+
+                            // Handle min/max timeouts from leader.
+                            b: {
+                                const on = (msg.proto2 & 0x8000000000000000) >> 63;
+                                if (on == 0) break :b;
+
+                                const lmin = ((msg.proto2 & 0x7FFFFFFF80000000) >> 31) * 1000;
+                                const lmax = ((msg.proto2 & 0x700000007FFFFFFF)) * 1000;
+
+                                @atomicStore(
+                                    u64,
+                                    &self.elex_tm_min,
+                                    lmin,
+                                    std.builtin.AtomicOrder.seq_cst,
+                                );
+
+                                @atomicStore(
+                                    u64,
+                                    &self.elex_tm_max,
+                                    lmax,
+                                    std.builtin.AtomicOrder.seq_cst,
+                                );
+
+                                // log.debug("heartbeat: recv: min={any}, max={any}", .{
+                                //     std.fmt.fmtDuration(lmin),
+                                //     std.fmt.fmtDuration(lmin),
+                                // });
                             }
                         }
 
@@ -849,6 +886,10 @@ pub fn Fleet(UserData: type) type {
             const random = prng.random();
 
             var ldr_last_sweep: bool = false;
+            const min_og = self.getElexTimeoutMin();
+            const max_og = self.getElexTimeoutMax();
+            var lmin: u64 = self.getElexTimeoutMin();
+            var lmax: u64 = self.getElexTimeoutMax();
 
             var i: usize = 0;
             while (true) : (i += 1) {
@@ -857,8 +898,8 @@ pub fn Fleet(UserData: type) type {
                 if ((n[0] + n[1]) < 3 or skip) {
                     std.time.sleep(random.intRangeAtMost(
                         u64,
-                        self.elex_tm_min,
-                        self.elex_tm_max,
+                        self.getElexTimeoutMin(),
+                        self.getElexTimeoutMax(),
                     ));
 
                     continue;
@@ -889,8 +930,8 @@ pub fn Fleet(UserData: type) type {
 
                         const rand = random.intRangeAtMost(
                             u64,
-                            self.elex_tm_min,
-                            self.elex_tm_max,
+                            self.getElexTimeoutMin(),
+                            self.getElexTimeoutMax(),
                         );
 
                         if (!allowed) {
@@ -898,7 +939,7 @@ pub fn Fleet(UserData: type) type {
                             continue;
                         }
 
-                        if (self.elex_tm.read() <= self.elex_tm_min) {
+                        if (self.elex_tm.read() <= self.getElexTimeoutMin()) {
                             std.time.sleep(rand);
                             continue;
                         }
@@ -926,8 +967,8 @@ pub fn Fleet(UserData: type) type {
                         if (bl.items.len == 0) {
                             std.time.sleep(random.intRangeAtMost(
                                 u64,
-                                self.elex_tm_min,
-                                self.elex_tm_max,
+                                self.getElexTimeoutMin(),
+                                self.getElexTimeoutMax(),
                             ));
 
                             continue;
@@ -979,7 +1020,7 @@ pub fn Fleet(UserData: type) type {
                         }
 
                         if (!to_leader) {
-                            if (self.candidate_tm.read() > self.elex_tm_min) {
+                            if (self.candidate_tm.read() > self.getElexTimeoutMin()) {
                                 log.debug("[{d}:{d}] lost the election, back to follower", .{
                                     i,
                                     self.getTerm(),
@@ -987,8 +1028,8 @@ pub fn Fleet(UserData: type) type {
 
                                 std.time.sleep(random.intRangeAtMost(
                                     u64,
-                                    self.elex_tm_min,
-                                    self.elex_tm_max,
+                                    self.getElexTimeoutMin(),
+                                    self.getElexTimeoutMax(),
                                 ));
 
                                 self.setState(.follower);
@@ -997,15 +1038,17 @@ pub fn Fleet(UserData: type) type {
                                 self.voted_for = self.refkeys.getKeyPtr("0").?.*;
                             } else std.time.sleep(random.intRangeAtMost(
                                 u64,
-                                self.elex_tm_min,
-                                self.elex_tm_max,
+                                self.getElexTimeoutMin(),
+                                self.getElexTimeoutMax(),
                             ));
                         }
                     },
                     .leader => {
                         var tm = try std.time.Timer.start();
+                        var fails: usize = 0;
                         var deferlog = false;
                         defer {
+                            if (fails > 0) std.time.sleep(std.time.ns_per_ms * 50);
                             if (deferlog) {
                                 if (@mod(i, 40) == 0) {
                                     log.debug("[{d}:{d}] leader here, hb took {any}", .{
@@ -1034,8 +1077,8 @@ pub fn Fleet(UserData: type) type {
                         if (bl.items.len == 0) {
                             std.time.sleep(random.intRangeAtMost(
                                 u64,
-                                self.elex_tm_min,
-                                self.elex_tm_max,
+                                self.getElexTimeoutMin(),
+                                self.getElexTimeoutMax(),
                             ));
 
                             continue;
@@ -1052,8 +1095,10 @@ pub fn Fleet(UserData: type) type {
                         var latencies = std.ArrayList(u64).init(self.allocator);
                         defer latencies.deinit();
 
-                        var fails: usize = 0;
                         var ltm = try std.time.Timer.start();
+
+                        if (ldr_last_sweep)
+                            msg.proto2 = (1 << 63) | ((lmin / 1000) << 31) | (lmax / 1000);
 
                         for (bl.items) |k| {
                             deferlog = true;
@@ -1069,12 +1114,7 @@ pub fn Fleet(UserData: type) type {
 
                             ltm.reset();
                             self.send(ip, port, buf, 50_000) catch |err| {
-                                log.debug("[{d}:{d}] send (heartbeat) failed: {any}", .{
-                                    i,
-                                    self.getTerm(),
-                                    err,
-                                });
-
+                                log.err("[{d}] hb:send failed: {any}", .{ i, err });
                                 fails += 1;
                                 continue;
                             };
@@ -1083,21 +1123,22 @@ pub fn Fleet(UserData: type) type {
                         }
 
                         if (fails == 0) {
-                            var total: usize = 0;
+                            var total: u64 = 0;
                             for (latencies.items) |v| total += v;
                             const avg = total / latencies.items.len;
-
-                            if (@mod(i, 20) == 0)
-                                log.debug("[{d}:{d}] latency avg: {any}", .{
-                                    i,
-                                    self.getTerm(),
-                                    std.fmt.fmtDuration(avg),
-                                });
+                            const avgf: f64 = @floatFromInt(avg);
+                            const minf: f64 = @floatFromInt(self.getElexTimeoutMin());
+                            const nminf = avgf / 0.05;
+                            if (nminf > minf) {
+                                lmin = @intFromFloat(nminf);
+                                lmax = lmin + std.time.ns_per_s;
+                            } else {
+                                lmin = min_og;
+                                lmax = max_og;
+                            }
                         }
 
                         ldr_last_sweep = if (fails == 0) true else false;
-
-                        // TODO: This needs to be very short.
                         std.time.sleep(std.time.ns_per_ms * 50);
                     },
                 }
@@ -2049,6 +2090,22 @@ pub fn Fleet(UserData: type) type {
 
         fn incVotesAndGet(self: *Self) u32 {
             return self.voteForSelf();
+        }
+
+        fn getElexTimeoutMin(self: *Self) u64 {
+            return @atomicLoad(
+                u64,
+                &self.elex_tm_min,
+                std.builtin.AtomicOrder.seq_cst,
+            );
+        }
+
+        fn getElexTimeoutMax(self: *Self) u64 {
+            return @atomicLoad(
+                u64,
+                &self.elex_tm_max,
+                std.builtin.AtomicOrder.seq_cst,
+            );
         }
     };
 }
