@@ -353,7 +353,8 @@ pub fn Fleet(UserData: type) type {
             return out;
         }
 
-        // Run internal UDP server for comms.
+        // Run internal UDP server for handling both SWIM- and Raft-related
+        // protocols. Uses a single allocation of *Message all throughout.
         fn udpListen(self: *Self) !void {
             log.info("Starting UDP server on :{d}...", .{self.port});
 
@@ -481,7 +482,7 @@ pub fn Fleet(UserData: type) type {
 
                             // Use dst_* for ISD info.
                             var excludes: [1][]const u8 = .{src};
-                            try self.setMsgDstAndIsd(arena, msg, &excludes);
+                            try self.setMsgDst(arena, msg, &excludes);
 
                             // Handle join address protocol.
                             var ipm = msg.proto1 & 0x00000000FFFFFFFF;
@@ -531,7 +532,7 @@ pub fn Fleet(UserData: type) type {
 
                             // Use both dst_* and isd_* for ISD info.
                             var excludes: [1][]const u8 = .{dst};
-                            try self.setMsgDstAndIsd(arena, msg, &excludes);
+                            try self.setMsgDst(arena, msg, &excludes);
 
                             // Handle leader protocol (egress).
                             try self.setJoinProtoSend(msg);
@@ -686,7 +687,7 @@ pub fn Fleet(UserData: type) type {
             }
         }
 
-        // Thread running the SWIM protocol.
+        // Drives the SWIM protocol forward. Running on a separate thread.
         fn swimTick(self: *Self) !void {
             var i: usize = 0;
             while (true) : (i += 1) {
@@ -830,6 +831,7 @@ pub fn Fleet(UserData: type) type {
             }
         }
 
+        // Drives the Raft-based leader election forward. Running on a separate thread.
         fn leaderElectionTick(self: *Self) !void {
             const buf = try self.allocator.alloc(u8, @sizeOf(Message));
             defer self.allocator.free(buf); // release buffer
@@ -1211,7 +1213,7 @@ pub fn Fleet(UserData: type) type {
 
         // Setup the dst_* section of the payload.
         // We are passing in an arena allocator here.
-        fn setMsgDstAndIsd(
+        fn setMsgDst(
             self: *Self,
             allocator: std.mem.Allocator,
             msg: *Message,
@@ -1247,11 +1249,11 @@ pub fn Fleet(UserData: type) type {
             msg.cmd = .ping;
             try self.setMsgSrcToOwn(msg);
 
-            // Use both dst_* and isd_* for ISD info.
+            // Use dst_* for ISD info.
             var excludes: [1][]const u8 = .{key};
-            try self.setMsgDstAndIsd(arena, msg, &excludes);
+            try self.setMsgDst(arena, msg, &excludes);
 
-            // Handle leader protocol (egress).
+            // Handle join address protocol (egress).
             try self.setJoinProtoSend(msg);
 
             // Propagate number of members.
