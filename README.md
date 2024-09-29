@@ -19,7 +19,7 @@ At the moment, zgroup uses a single, 64-byte payload for all its messages, inclu
 
 I also wanted some sort of leader election capability without depending on an external lock service. At the moment, zgroup uses [Raft](https://raft.github.io/raft.pdf)'s leader election algorithm sub-protocol (without the log management) to achieve this. I should note that Raft's leader election algorithm depends on stable membership for it work properly, so zgroup's leader election is a best-effort basis only; split-brain can still happen while the cluster size is still changing. Additional code guards are added to minimize split-brain in these scenarios but it's not completely eliminated. In my use-case (and testing), gradual cluster size changes are mostly stable, while sudden changes with huge size deltas are not. For example, a big, sudden jump from three nodes (zgroup's minimum size) to, say, a hundred, due to autoscaling, would cause a split-brain. Once the target size is achieved however, a single leader will always be elected.
 
-A note on Raft's random timeouts during leader election: zgroup's leader tracks ping latency averages and attempts to adjust the timeouts accordingly to accomodate for cluster size changes overtime.
+A note on Raft's random timeout range during leader election: zgroup's leader tracks ping latency averages and attempts to adjust the timeout range accordingly to accomodate for cluster size changes overtime.
 
 ### Join address
 
