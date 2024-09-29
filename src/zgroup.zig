@@ -205,7 +205,7 @@ pub fn Fleet(UserData: type) type {
             /// The only valid value at the moment is `1`.
             ping_req_k: u32 = 1,
 
-            /// See `onLeader` field in `Callbacks` for more information.
+            /// See `Callbacks` struct for more information.
             callbacks: Callbacks,
         };
 
@@ -264,11 +264,11 @@ pub fn Fleet(UserData: type) type {
             self.elex_tm.reset();
             _ = try self.ensureKeyRef("0"); // dummy
 
-            const server = try std.Thread.spawn(.{}, Self.listen, .{self});
+            const server = try std.Thread.spawn(.{}, Self.udpListen, .{self});
             server.detach();
-            const ticker = try std.Thread.spawn(.{}, Self.tick, .{self});
+            const ticker = try std.Thread.spawn(.{}, Self.swimTick, .{self});
             ticker.detach();
-            const ldr = try std.Thread.spawn(.{}, Self.leaderTick, .{self});
+            const ldr = try std.Thread.spawn(.{}, Self.leaderElectionTick, .{self});
             ldr.detach();
 
             // self.ping_req_data = try self.allocator.create(RequestPing);
@@ -277,9 +277,8 @@ pub fn Fleet(UserData: type) type {
             // rp.detach();
         }
 
-        /// Ask an instance to join an existing group. `joined` will be
-        /// set to true if joining is successful. We are joining the
-        /// group through `dst_*`.
+        /// Ask a node to join an existing group. `joined` will be set to true
+        /// if joining is successful. We are joining the group through `dst_*`.
         pub fn join(
             self: *Self,
             name: []const u8,
@@ -355,7 +354,7 @@ pub fn Fleet(UserData: type) type {
         }
 
         // Run internal UDP server for comms.
-        fn listen(self: *Self) !void {
+        fn udpListen(self: *Self) !void {
             log.info("Starting UDP server on :{d}...", .{self.port});
 
             const name = std.mem.readVarInt(u64, self.name, .little);
@@ -688,7 +687,7 @@ pub fn Fleet(UserData: type) type {
         }
 
         // Thread running the SWIM protocol.
-        fn tick(self: *Self) !void {
+        fn swimTick(self: *Self) !void {
             var i: usize = 0;
             while (true) : (i += 1) {
                 var tm = try std.time.Timer.start();
@@ -831,7 +830,7 @@ pub fn Fleet(UserData: type) type {
             }
         }
 
-        fn leaderTick(self: *Self) !void {
+        fn leaderElectionTick(self: *Self) !void {
             const buf = try self.allocator.alloc(u8, @sizeOf(Message));
             defer self.allocator.free(buf); // release buffer
 
