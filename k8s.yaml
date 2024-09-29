@@ -29,7 +29,6 @@ spec:
             memory: 500Mi
         imagePullPolicy: Always
         env:
-        # Downward value to know if we are running in k8s.
         - name: K8S_MY_POD_IP
           valueFrom:
             fieldRef:
