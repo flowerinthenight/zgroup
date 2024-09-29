@@ -43,10 +43,6 @@ pub fn Fleet(UserData: type) type {
         ping_req_0: std.Thread.ResetEvent = .{}, // request
         ping_req_1: std.Thread.ResetEvent = .{}, // response
 
-        // Internal queue for suspicion subprotocol.
-        // isd_queue: std.ArrayList(KeyInfo),
-        // isd_mtx: std.Thread.Mutex = .{},
-
         // Join address heartbeat timeout.
         join_addr_tm: std.time.Timer,
 
@@ -124,13 +120,6 @@ pub fn Fleet(UserData: type) type {
             dst_port: u16 = 0,
             dst_state: Liveness = .alive,
             dst_incarnation: u64 = 0,
-
-            // Infection-style dissemination section.
-            // isd_cmd: IsdCommand = .noop,
-            // isd_ip: u32 = 0,
-            // isd_port: u16 = 0,
-            // isd_state: Liveness = .alive,
-            // isd_incarnation: u64 = 0,
 
             // Used for multiple subprotocols explained below:
             //
@@ -237,7 +226,6 @@ pub fn Fleet(UserData: type) type {
                 .members = std.StringHashMap(MemberData).init(allocator),
                 .refkeys = std.StringHashMap(void).init(allocator),
                 .ping_queue = std.ArrayList([]const u8).init(allocator),
-                // .isd_queue = std.ArrayList(KeyInfo).init(allocator),
                 .join_addr_tm = try std.time.Timer.start(),
                 .callbacks = config.callbacks,
                 .leader = try std.fmt.allocPrint(allocator, "", .{}),
@@ -258,10 +246,8 @@ pub fn Fleet(UserData: type) type {
             self.members.deinit();
             var it = self.refkeys.iterator();
             while (it.next()) |v| self.allocator.free(v.key_ptr.*);
-            // self.allocator.destroy(self.ping_req_data);
             self.refkeys.deinit();
             self.ping_queue.deinit();
-            // self.isd_queue.deinit();
         }
 
         /// Start group membership tracking.
@@ -410,15 +396,6 @@ pub fn Fleet(UserData: type) type {
                 defer aa.deinit(); // destroy arena in one go
                 const arena = aa.allocator();
 
-                // switch (msg.isd_cmd) {
-                //     .infect,
-                //     .confirm_alive,
-                //     => try self.handleIsd(arena, msg, false),
-                //     .suspect => try self.handleSuspicion(arena, msg),
-                //     .confirm_faulty => try self.handleConfirmFaulty(arena, msg),
-                //     else => {},
-                // }
-
                 // Main protocol message handler.
                 switch (msg.cmd) {
                     .join => b: {
@@ -466,7 +443,6 @@ pub fn Fleet(UserData: type) type {
                         //
                         //   src_*: caller/requester
                         //   dst_*: ISD (piggyback)
-                        //   isd_*: ISD
                         //
                         msg.cmd = .nack; // default
 
@@ -504,7 +480,7 @@ pub fn Fleet(UserData: type) type {
                             // Always set src_* to own info.
                             try self.setMsgSrcToOwn(msg);
 
-                            // Use both dst_* and isd_* for ISD info.
+                            // Use dst_* for ISD info.
                             var excludes: [1][]const u8 = .{src};
                             try self.setMsgDstAndIsd(arena, msg, &excludes);
 
@@ -542,7 +518,6 @@ pub fn Fleet(UserData: type) type {
                         //
                         //   src_*: caller/requester (we are the agent)
                         //   dst_*: target of the ping-request
-                        //   isd_*: ISD
                         //
                         if (msg.name == name) {
                             const src = try keyFromIpPort(arena, msg.src_ip, msg.src_port);
@@ -583,12 +558,6 @@ pub fn Fleet(UserData: type) type {
 
                             // Always set src_* to own info.
                             try self.setMsgSrcToOwn(msg);
-
-                            // const isd = try self.getIsdInfo(arena, 1);
-                            // if (isd.items.len > 0) {
-                            //     msg.isd_cmd = .infect;
-                            //     try setMsgSection(msg, .isd, isd.items[0]);
-                            // }
 
                             // Handle join address protocol (egress).
                             try self.setJoinProtoSend(msg);
@@ -657,11 +626,6 @@ pub fn Fleet(UserData: type) type {
                                     lmax,
                                     std.builtin.AtomicOrder.seq_cst,
                                 );
-
-                                // log.debug("heartbeat: recv: min={any}, max={any}", .{
-                                //     std.fmt.fmtDuration(lmin),
-                                //     std.fmt.fmtDuration(lmin),
-                                // });
                             }
                         }
 
@@ -685,17 +649,12 @@ pub fn Fleet(UserData: type) type {
 
                         const term = self.getTerm();
 
-                        // log.debug("req4votes: my_term={d}, in_term={d}", .{ term, msg.leader_proto });
-                        // log.debug("req4votes: voted_for={s}, voted={any}", .{ self.voted_for, voted });
-
                         if (msg.proto1 >= term and !voted and self.getState() != .leader) {
                             msg.cmd = .ack;
                             self.setTerm(msg.proto1);
 
                             const src = try keyFromIpPort(arena, msg.src_ip, msg.src_port);
                             const vkey = try self.ensureKeyRef(src);
-
-                            // log.debug("[{d}] received req4votes from {s}", .{ i, vkey });
 
                             {
                                 self.elex_mtx.lock();
@@ -736,8 +695,6 @@ pub fn Fleet(UserData: type) type {
                 var aa = std.heap.ArenaAllocator.init(self.allocator);
                 defer aa.deinit(); // destroy arena in one go
                 const arena = aa.allocator();
-
-                // log.debug("[{d}]", .{i}); // log separator
 
                 // const counts = self.getCounts();
                 // log.debug("[{d}] members: alive={d}, suspected={d}, faulty={d}, total={d}", .{
@@ -1253,26 +1210,7 @@ pub fn Fleet(UserData: type) type {
             return out;
         }
 
-        // Caller is responsible for releasing the returned memory.
-        // We are passing in an arena allocator here.
-        // fn getIsdInfo(
-        //     self: *Self,
-        //     allocator: std.mem.Allocator,
-        //     max: usize,
-        // ) !std.ArrayList(KeyInfo) {
-        //     var out = std.ArrayList(KeyInfo).init(allocator);
-        //     self.isd_mtx.lock();
-        //     defer self.isd_mtx.unlock();
-        //     while (true) {
-        //         const pop = self.isd_queue.popOrNull();
-        //         if (pop) |v| try out.append(v) else break;
-        //         if (out.items.len >= max) break;
-        //     }
-
-        //     return out;
-        // }
-
-        // Setup both dst_* and isd_* sections of the payload.
+        // Setup the dst_* section of the payload.
         // We are passing in an arena allocator here.
         fn setMsgDstAndIsd(
             self: *Self,
@@ -1288,81 +1226,7 @@ pub fn Fleet(UserData: type) type {
                 if (ki) |_| {} else break :b;
                 try setMsgSection(msg, .dst, ki.?);
             }
-
-            // Setup main ISD info.
-            // const isd = try self.getIsdInfo(allocator, 1);
-            // if (isd.items.len > 0) {
-            //     msg.isd_cmd = isd.items[0].isd_cmd;
-            //     try setMsgSection(msg, .isd, isd.items[0]);
-            // }
         }
-
-        // Setup both dst_* and isd_* sections of the payload.
-        // We are passing in an arena allocator here.
-        // fn _setMsgDstAndIsd(
-        //     self: *Self,
-        //     allocator: std.mem.Allocator,
-        //     key: []const u8,
-        //     msg: *Message,
-        //     excludes: ?[][]const u8,
-        // ) !void {
-        //     b: {
-        //         const dst = try self.getNextDstTarget(allocator, key, excludes);
-        //         if (dst.items.len == 0) break :b;
-        //         const ki = self.getKeyInfo(dst.items[0]);
-        //         if (ki) |_| {} else break :b;
-        //         msg.dst_cmd = .infect;
-        //         try setMsgSection(msg, .dst, ki.?);
-        //     }
-
-        //     // Setup main ISD info.
-        //     const isd = try self.getIsdInfo(allocator, 1);
-        //     if (isd.items.len > 0) {
-        //         msg.isd_cmd = isd.items[0].isd_cmd;
-        //         try setMsgSection(msg, .isd, isd.items[0]);
-        //     }
-        // }
-
-        // Caller is responsible for calling deinit on the returned list,
-        // unless arena. We are passing in an arena allocator here.
-        // fn getNextDstTarget(
-        //     self: *Self,
-        //     allocator: std.mem.Allocator,
-        //     key: []const u8,
-        //     excludes: ?[][]const u8,
-        // ) !std.ArrayList([]const u8) {
-        //     var out = std.ArrayList([]const u8).init(allocator);
-        //     while (true) {
-        //         self.members_mtx.lock();
-        //         defer self.members_mtx.unlock();
-        //         const val = self.members.getPtr(key);
-        //         if (val) |_| {} else return out;
-
-        //         const popn = val.?.targets.popOrNull();
-        //         if (popn) |pop| {
-        //             try out.append(pop);
-        //             return out;
-        //         }
-
-        //         // If we're here, refill targets.
-        //         var iter = self.members.iterator();
-        //         while (iter.next()) |v| {
-        //             if (v.value_ptr.state == .faulty) continue;
-        //             if (std.mem.eql(u8, v.key_ptr.*, key)) continue;
-        //             var eql: usize = 0;
-        //             if (excludes) |excl| {
-        //                 for (excl) |x| {
-        //                     if (std.mem.eql(u8, x, v.key_ptr.*)) eql += 1;
-        //                 }
-        //             }
-
-        //             if (eql > 0) continue;
-        //             try val.?.targets.append(v.key_ptr.*);
-        //         }
-        //     }
-
-        //     unreachable;
-        // }
 
         // Ping a peer for liveness. Expected format for `key` is "ip:port",
         // eg. "127.0.0.1:8080". For pings, we use the src_* payload fields
@@ -1392,10 +1256,8 @@ pub fn Fleet(UserData: type) type {
             try self.setJoinProtoSend(msg);
 
             // Propagate number of members.
-            // if (msg.isd_cmd == .noop) {
             const n = self.getCounts();
             msg.proto2 = n[0] + n[1];
-            // }
 
             try self.send(ip, port, buf, null);
 
@@ -1414,16 +1276,6 @@ pub fn Fleet(UserData: type) type {
                         const k = try keyFromIpPort(arena, msg.dst_ip, msg.dst_port);
                         try self.upsertMember(k, msg.dst_state, msg.dst_incarnation, false);
                     }
-
-                    // Consume isd_* as the main ISD info.
-                    // switch (msg.isd_cmd) {
-                    //     .infect,
-                    //     .confirm_alive,
-                    //     => try self.handleIsd(arena, msg, false),
-                    //     .suspect => try self.handleSuspicion(arena, msg),
-                    //     .confirm_faulty => try self.handleConfirmFaulty(arena, msg),
-                    //     else => {},
-                    // }
 
                     break :b true;
                 },
@@ -1565,16 +1417,6 @@ pub fn Fleet(UserData: type) type {
                 try self.IncrementIncarnation();
                 const pkey = self.getPersistentKeyFromKey(key);
                 if (pkey) |_| {} else break :b;
-
-                // self.isd_mtx.lock();
-                // defer self.isd_mtx.unlock();
-                // try self.isd_queue.append(.{
-                //     .key = pkey.?,
-                //     .state = .alive,
-                //     .isd_cmd = .confirm_alive,
-                //     .incarnation = try self.getIncarnation(), // ok since atomic
-                // });
-
                 return;
             }
 
@@ -1598,17 +1440,6 @@ pub fn Fleet(UserData: type) type {
 
             const pkey = self.getPersistentKeyFromKey(key);
             if (pkey) |_| {} else return;
-
-            // {
-            //     self.isd_mtx.lock();
-            //     defer self.isd_mtx.unlock();
-            //     try self.isd_queue.append(.{
-            //         .key = pkey.?,
-            //         .state = suspected.items[0].state,
-            //         .isd_cmd = suspected.items[0].isd_cmd,
-            //         .incarnation = suspected.items[0].incarnation,
-            //     });
-            // }
         }
 
         // Handle the isd_* faulty protocol of the message payload.
@@ -1622,15 +1453,6 @@ pub fn Fleet(UserData: type) type {
 
             const pkey = self.getPersistentKeyFromKey(key);
             if (pkey) |_| {} else return;
-
-            // self.isd_mtx.lock();
-            // defer self.isd_mtx.unlock();
-            // try self.isd_queue.append(.{
-            //     .key = pkey.?,
-            //     .state = .alive,
-            //     .isd_cmd = .confirm_alive,
-            //     .incarnation = try self.getIncarnation(), // ok since atomic
-            // });
         }
 
         // NOTE: Not using locks; only atomic.
@@ -1789,8 +1611,6 @@ pub fn Fleet(UserData: type) type {
             msg.src_state = .alive;
             msg.dst_cmd = .noop;
             msg.dst_state = .alive;
-            // msg.isd_cmd = .noop;
-            // msg.isd_state = .alive;
             msg.proto1 = 0;
             msg.proto2 = 0;
         }
@@ -1990,13 +1810,6 @@ pub fn Fleet(UserData: type) type {
                     msg.dst_state = info.liveness;
                     msg.dst_incarnation = info.incarnation;
                 },
-                // .isd => {
-                //     msg.isd_ip = addr.in.sa.addr;
-                //     msg.isd_port = port;
-                //     msg.isd_state = info.liveness;
-                //     msg.isd_incarnation = info.incarnation;
-                // },
-
             }
         }
 
