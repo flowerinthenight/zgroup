@@ -86,7 +86,7 @@ $ ZGROUP_JOIN_PREFIX={output} ./zig-out/bin/zgroup group1 0.0.0.0:8083
 # and so on...
 ```
 
-A sample Kubernetes [deployment file](./k8s.yaml) is also provided. Before deploying though, make sure to update the `ZGROUP_JOIN_PREFIX` environment variable, like so:
+A sample Kubernetes [deployment file](./k8s.yaml) is also provided to try zgroup on [Kubernetes Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/). Before deploying though, make sure to update the `ZGROUP_JOIN_PREFIX` environment variable, like so:
 
 ```sh
 # Generate UUID:
