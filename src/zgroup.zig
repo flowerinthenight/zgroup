@@ -1960,6 +1960,12 @@ fn keyFromIpPort(allocator: std.mem.Allocator, ip: u32, port: u16) ![]const u8 {
     });
 }
 
+test "keyFromIpPort" {
+    const out = try keyFromIpPort(std.testing.allocator, 16777343, 8080);
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.mem.eql(u8, out, "127.0.0.1:8080"));
+}
+
 /// Set socket read timeout in microseconds. Linux only.
 pub fn setReadTimeout(socket: std.posix.socket_t, read: ?u32) !void {
     std.debug.assert(read == null or read.? != 0);
