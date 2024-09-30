@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: zgroup
-        image: quay.io/flowerinthenight/zgroup:v0.3.1
+        image: quay.io/flowerinthenight/zgroup:v0.3.2
         command: ["/bin/sh"]
         args: ["-c", '/app/zgroup group1 ${K8S_MY_POD_IP}:8080']
         resources:
