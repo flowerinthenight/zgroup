@@ -4,6 +4,7 @@ const backoff = @import("zbackoff");
 
 const log = std.log;
 
+// You can change zgroup's log-level to .info.
 pub const std_options = .{
     .log_level = .info,
     .log_scope_levels = &[_]std.log.ScopeLevel{
@@ -11,6 +12,7 @@ pub const std_options = .{
     },
 };
 
+// To be passed to our callback(s).
 const UserData = struct {
     prefix: []const u8,
     group: []const u8,
