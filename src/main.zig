@@ -80,7 +80,7 @@ pub fn main() !void {
         .onJoinAddr = onJoinAddr,
 
         // So we won't overload the free service we are using.
-        .on_join_every = 10,
+        .on_join_every = 50,
     };
 
     var member = hm.getEntry(2).?.value_ptr.*;
