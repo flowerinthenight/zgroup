@@ -1031,15 +1031,17 @@ pub fn Fleet(UserData: type) type {
                     },
                     .leader => {
                         var tm = try std.time.Timer.start();
+                        var items_len: usize = 0;
                         var fails: usize = 0;
                         var deferlog = false;
                         defer {
                             if (fails > 0) std.time.sleep(self.elex_delay);
                             if (deferlog) {
                                 if (@mod(i, 40) == 0) {
-                                    log.debug("[{d}:{d}] leader here, hb took {any}", .{
+                                    log.debug("[{d}:{d}] leader: hb to {d} nodes, took {any}", .{
                                         i,
                                         self.getTerm(),
+                                        items_len,
                                         std.fmt.fmtDuration(tm.read() - self.elex_delay),
                                     });
                                 }
@@ -1070,14 +1072,7 @@ pub fn Fleet(UserData: type) type {
                             continue;
                         }
 
-                        if (@mod(i, 40) == 0) {
-                            log.debug("[{d}:{d}] leader here, hb to {d} nodes", .{
-                                i,
-                                self.getTerm(),
-                                bl.items.len,
-                            });
-                        }
-
+                        items_len = bl.items.len; // for later log (see defer)
                         var latencies = std.ArrayList(u64).init(self.allocator);
                         defer latencies.deinit();
 
