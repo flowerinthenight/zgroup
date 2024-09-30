@@ -133,7 +133,7 @@ $ gcloud compute instance-templates create zgroup-tmpl \
 
 # Create a regional MIG:
 $ gcloud compute instance-groups managed create rmig \
-  --template zgroup-tmpl --size 3 --region {your-retion}
+  --template zgroup-tmpl --size 3 --region {your-region}
 
 # You can view the logs through:
 $ tail -f /var/log/messages
