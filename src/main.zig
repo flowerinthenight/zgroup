@@ -107,7 +107,7 @@ pub fn main() !void {
         if (joined)
             std.time.sleep(std.time.ns_per_s * 1)
         else
-            std.time.sleep(bo.pause());
+            std.time.sleep(if (i >= 100) std.time.ns_per_s else bo.pause());
 
         if (i > 1 and i < 100 and !joined) {
             switch (hm.count()) {
@@ -136,7 +136,12 @@ pub fn main() !void {
                         join_addr[0..sep],
                         join_port,
                         &joined,
-                    ) catch |err| log.err("join failed: {any}", .{err});
+                    ) catch |err|
+                        log.err("joining thru {s}:{d} failed: {any}", .{
+                        join_addr[0..sep],
+                        join_port,
+                        err,
+                    });
                 },
                 4 => {
                     // Join address is provided. Skip callback.

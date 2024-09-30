@@ -207,3 +207,7 @@ test "envmap" {
         dbg("no PATH\n", .{});
     }
 }
+
+// gcloud compute instance-templates create sample-template-custom --machine-type e2-micro --metadata=startup-script=''"$(cat gcp-mig-startup.sh)"''
+// gcloud compute instance-groups managed create example-rmig --template sample-template-custom --size 3 --region asia-northeast1
+// sudo journalctl -u google-startup-scripts.service
