@@ -27,9 +27,12 @@ For a node to join an existing cluster, it needs a joining address. While zgroup
 
 ## Sample binary
 
-A [sample](./src/main.zig) binary is provided to show a way to use the library. There are two ways to run the sample: **a)** specifying the join address manually, and **b)** using an external service to get the join address.
+A [sample](./src/main.zig) binary is provided to show a way to use the library. There are two ways to run the sample:
 
-To run locally using **a)**, try something like:
+* Specifying the join address manually
+* Using an external service to get the join address
+
+### Local with join address
 
 ```sh
 # Build the sample binary:
@@ -56,7 +59,9 @@ $ ./zig-out/bin/zgroup group1 0.0.0.0:8083 0.0.0.0:8080
 # and so on...
 ```
 
-To run locally using **b)**, the sample binary uses a free service, [https://keyvalue.immanuel.co/](https://keyvalue.immanuel.co/), as a store for the join address.
+### Local with an external service
+
+If configured, the sample binary uses a free service, [https://keyvalue.immanuel.co/](https://keyvalue.immanuel.co/), as a store for the join address.
 
 ```sh
 # Build the sample binary:
@@ -85,6 +90,8 @@ $ ZGROUP_JOIN_PREFIX={output} ./zig-out/bin/zgroup group1 0.0.0.0:8083
 
 # and so on...
 ```
+
+### Kubernetes
 
 A sample Kubernetes [deployment file](./k8s.yaml) is also provided to try zgroup on [Kubernetes Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/). Before deploying though, make sure to update the `ZGROUP_JOIN_PREFIX` environment variable, like so:
 
