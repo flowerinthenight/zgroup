@@ -115,7 +115,7 @@ $ kubectl create -f k8s.yaml
 
 ### GCP Managed Instance Group (MIG)
 
-A sample [startup script](./gcp-mig-startup.sh) is provided to try zgroup on a GCP MIG. Before deploying though, make sure to update the `ZGROUP_JOIN_PREFIX` value in the script, like so:
+A sample [startup script](./gcp-mig-startup.sh) is provided to try zgroup on a [GCP MIG](https://cloud.google.com/compute/docs/instance-groups#managed_instance_groups). Before deploying though, make sure to update the `ZGROUP_JOIN_PREFIX` value in the script, like so:
 
 ```sh
 # Generate UUID:
@@ -138,6 +138,10 @@ $ gcloud compute instance-groups managed create rmig \
 # You can view the logs through:
 $ tail -f /var/log/messages
 ```
+
+### AWS Autoscaling Group
+
+TBD
 
 ## Getting the list of members
 
