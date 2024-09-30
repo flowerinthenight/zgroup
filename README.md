@@ -91,9 +91,9 @@ $ ZGROUP_JOIN_PREFIX={output} ./zig-out/bin/zgroup group1 0.0.0.0:8083
 # and so on...
 ```
 
-### Kubernetes
+### Kubernetes (Deployment)
 
-A sample Kubernetes [deployment file](./k8s.yaml) is also provided to try zgroup on [Kubernetes Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/). Before deploying though, make sure to update the `ZGROUP_JOIN_PREFIX` environment variable, like so:
+A sample Kubernetes [deployment file](./k8s.yaml) is provided to try zgroup on [Kubernetes Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/). Before deploying though, make sure to update the `ZGROUP_JOIN_PREFIX` environment variable, like so:
 
 ```sh
 # Generate UUID:
@@ -111,6 +111,32 @@ $ kubectl create -f k8s.yaml
 
 # You will notice some initial errors in the logs.
 # Wait for a while before the K/V store is updated.
+```
+
+### GCP Managed Instance Group (MIG)
+
+A sample [startup script](./gcp-mig-startup.sh) is provided to try zgroup on a GCP MIG. Before deploying though, make sure to update the `ZGROUP_JOIN_PREFIX` value in the script, like so:
+
+```sh
+# Generate UUID:
+$ uuidgen
+{output}
+
+# Update the 'value' part of ZGROUP_JOIN_PREFIX with your output.
+...
+ZGROUP_JOIN_PREFIX={output} ./zgroup group1 ...
+
+# Create an instance template:
+$ gcloud compute instance-templates create zgroup-tmpl \
+  --machine-type e2-micro \
+  --metadata=startup-script=''"$(cat gcp-mig-startup.sh)"''
+
+# Create a regional MIG:
+$ gcloud compute instance-groups managed create rmig \
+  --template zgroup-tmpl --size 3 --region {your-retion}
+
+# You can view the logs through:
+$ tail -f /var/log/messages
 ```
 
 ## Getting the list of members
