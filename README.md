@@ -152,9 +152,8 @@ $ uuidgen
 ...
 ZGROUP_JOIN_PREFIX={output} ./zgroup group1 ...
 
-# Create a launch template. ImageId here is Amazon Linux,
-# using default VPC.
-# (Added newlines for readability.)
+# Create a launch template. ImageId here is Amazon Linux, default VPC.
+# (Added newlines for readability. Might not run when copied as is.)
 $ aws ec2 create-launch-template \
   --launch-template-name zgroup-lt \
   --version-description version1 \
