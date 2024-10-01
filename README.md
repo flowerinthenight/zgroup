@@ -153,10 +153,16 @@ $ uuidgen
 ZGROUP_JOIN_PREFIX={output} ./zgroup group1 ...
 
 # Create an launch template:
+# (Added newlines for readability)
 $ aws ec2 create-launch-template \
   --launch-template-name zgroup-lt \
   --version-description version1 \
-  --launch-template-data '{"UserData":"'"$(cat aws-asg-startup.sh | base64 -w 0)"'","ImageId":"ami-0f75d1a8c9141bd00","InstanceType":"t2.micro"}'
+  --launch-template-data '
+  {
+    "UserData":"'"$(cat aws-asg-startup.sh | base64 -w 0)"'",
+    "ImageId":"ami-0f75d1a8c9141bd00",
+    "InstanceType":"t2.micro"
+  }'
 
 # Create the ASG:
 $ aws autoscaling create-auto-scaling-group \
