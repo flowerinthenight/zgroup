@@ -212,5 +212,5 @@ test "envmap" {
 // gcloud compute instance-groups managed create example-rmig --template sample-template-custom --size 3 --region asia-northeast1
 // sudo journalctl -u google-startup-scripts.service
 
-// aws ec2 create-launch-template --launch-template-name zgroup-lt --version-description version1 --launch-template-data '{"UserData":"","ImageId":"ami-0f75d1a8c9141bd00","InstanceType":"t2.micro"}'
+// aws ec2 create-launch-template --launch-template-name zgroup-lt --version-description version1 --launch-template-data '{"UserData":"'"$(cat aws-asg-startup.sh | base64 -w 0)"'","ImageId":"ami-0f75d1a8c9141bd00","InstanceType":"t2.micro"}'
 // aws autoscaling create-auto-scaling-group --auto-scaling-group-name zgroup-asg --launch-template LaunchTemplateName=zgroup-lt,Version='1' --min-size 1 --max-size 1 --availability-zones ap-northeast-1a
