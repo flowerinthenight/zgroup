@@ -141,7 +141,34 @@ $ tail -f /var/log/messages
 
 ### AWS Autoscaling Group
 
-TBD
+A sample [startup script](./aws-asg-startup.sh) is provided to try zgroup on an [AWS ASG](https://docs.aws.amazon.com/autoscaling/ec2/userguide/auto-scaling-groups.html). Before deploying though, make sure to update the `ZGROUP_JOIN_PREFIX` value in the script, like so:
+
+```sh
+# Generate UUID:
+$ uuidgen
+{output}
+
+# Update the 'value' part of ZGROUP_JOIN_PREFIX with your output.
+...
+ZGROUP_JOIN_PREFIX={output} ./zgroup group1 ...
+
+# Create an launch template:
+$ aws ec2 create-launch-template \
+  --launch-template-name zgroup-lt \
+  --version-description version1 \
+  --launch-template-data '{"UserData":"'"$(cat aws-asg-startup.sh | base64 -w 0)"'","ImageId":"ami-0f75d1a8c9141bd00","InstanceType":"t2.micro"}'
+
+# Create the ASG:
+$ aws autoscaling create-auto-scaling-group \
+  --auto-scaling-group-name zgroup-asg \
+  --launch-template LaunchTemplateName=zgroup-lt,Version='1' \
+  --min-size 3 \
+  --max-size 3 \
+  --availability-zones {target-zone}
+
+# You can view the logs through:
+$ [sudo] journalctl -f
+```
 
 ## Getting the list of members
 
