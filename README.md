@@ -152,8 +152,8 @@ $ uuidgen
 ...
 ZGROUP_JOIN_PREFIX={output} ./zgroup group1 ...
 
-# Create an launch template:
-# (Added newlines for readability)
+# Create a launch template:
+# (Added newlines for readability.)
 $ aws ec2 create-launch-template \
   --launch-template-name zgroup-lt \
   --version-description version1 \
