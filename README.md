@@ -115,7 +115,7 @@ $ kubectl create -f k8s.yaml
 
 ### GCP Managed Instance Group (MIG)
 
-A sample [startup script](./gcp-mig-startup.sh) is provided to try zgroup on a [GCP MIG](https://cloud.google.com/compute/docs/instance-groups#managed_instance_groups). Before deploying though, make sure to update the `ZGROUP_JOIN_PREFIX` value in the script, like so:
+A sample [startup script](./startup-gcp-mig.sh) is provided to try zgroup on a [GCP MIG](https://cloud.google.com/compute/docs/instance-groups#managed_instance_groups). Before deploying though, make sure to update the `ZGROUP_JOIN_PREFIX` value in the script, like so:
 
 ```sh
 # Generate UUID:
@@ -129,7 +129,7 @@ ZGROUP_JOIN_PREFIX={output} ./zgroup group1 ...
 # Create an instance template:
 $ gcloud compute instance-templates create zgroup-tmpl \
   --machine-type e2-micro \
-  --metadata=startup-script=''"$(cat gcp-mig-startup.sh)"''
+  --metadata=startup-script=''"$(cat startup-gcp-mig.sh)"''
 
 # Create a regional MIG:
 $ gcloud compute instance-groups managed create rmig \
@@ -141,7 +141,7 @@ $ tail -f /var/log/messages
 
 ### AWS Autoscaling Group
 
-A sample [startup script](./aws-asg-startup.sh) is provided to try zgroup on an [AWS ASG](https://docs.aws.amazon.com/autoscaling/ec2/userguide/auto-scaling-groups.html). Before deploying though, make sure to update the `ZGROUP_JOIN_PREFIX` value in the script, like so:
+A sample [startup script](./startup-aws-asg.sh) is provided to try zgroup on an [AWS ASG](https://docs.aws.amazon.com/autoscaling/ec2/userguide/auto-scaling-groups.html). Before deploying though, make sure to update the `ZGROUP_JOIN_PREFIX` value in the script, like so:
 
 ```sh
 # Generate UUID:
@@ -159,7 +159,7 @@ $ aws ec2 create-launch-template \
   --version-description version1 \
   --launch-template-data '
   {
-    "UserData":"'"$(cat aws-asg-startup.sh | base64 -w 0)"'",
+    "UserData":"'"$(cat startup-aws-asg.sh | base64 -w 0)"'",
     "ImageId":"ami-0f75d1a8c9141bd00",
     "InstanceType":"t2.micro"
   }'
