@@ -5,6 +5,8 @@
 [![main](https://github.com/flowerinthenight/zgroup/actions/workflows/main.yml/badge.svg)](https://github.com/flowerinthenight/zgroup/actions/workflows/main.yml)
 [![Docker Repository on Quay](https://quay.io/repository/flowerinthenight/zgroup/status "Docker Repository on Quay")](https://quay.io/repository/flowerinthenight/zgroup)
 
+(This repo is mirrored to [https://codeberg.org/flowerinthenight/zgroup](https://codeberg.org/flowerinthenight/zgroup)).
+
 ## Overview
 
 **zgroup** is a [Zig](https://ziglang.org/) library that can manage cluster membership and member failure detection. It uses a combination of [SWIM Protocol](https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf)'s gossip-style information dissemination, and [Raft](https://raft.github.io/raft.pdf)'s leader election algorithm (minus the log management) to track cluster changes.
