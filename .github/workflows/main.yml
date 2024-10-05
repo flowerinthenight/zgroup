@@ -9,8 +9,8 @@ on:
     branches: [ "main" ]
 
 jobs:
-  mirror:
-    name: Mirror
+  codeberg:
+    name: Codeberg
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
