@@ -207,3 +207,39 @@ test "envmap" {
         dbg("no PATH\n", .{});
     }
 }
+
+test "fba" {
+    const mem = try std.testing.allocator.alloc(u8, 8);
+    defer std.testing.allocator.free(mem);
+    var _fba = std.heap.FixedBufferAllocator.init(mem);
+    var fba = _fba.allocator();
+    dbg("0x{X}\n", .{mem});
+    var m0 = try fba.alloc(u8, 1);
+    m0[0] = 0xFF;
+    dbg("0x{X}\n", .{mem});
+    var m1 = try fba.alloc(u8, 1);
+    m1[0] = 0x7F;
+    dbg("0x{X}\n", .{mem});
+    var m2 = try fba.alloc(u8, 1);
+    m2[0] = 0x8F;
+    dbg("0x{X}\n", .{mem});
+    var m3 = try fba.alloc(u8, 1);
+    m3[0] = 0x9F;
+    dbg("0x{X}\n", .{mem});
+    var m = try fba.alloc(u8, 4);
+    m[0] = 0xBF;
+    m[1] = 0xBF;
+    m[2] = 0xBF;
+    m[3] = 0xBF;
+    dbg("0x{X}\n", .{mem});
+
+    fba.free(m0);
+    fba.free(m1);
+    fba.free(m3);
+    dbg("0x{X}\n", .{mem});
+
+    var mx = try fba.alloc(u8, 2);
+    mx[0] = 0x21;
+    mx[1] = 0x21;
+    dbg("0x{X}\n", .{mem});
+}
