@@ -1,4 +1,5 @@
-**NOTE**: Still in alpha stage. APIs may change.
+> [!WARNING]
+> Still in alpha stage. APIs may change.
 
 ---
 
